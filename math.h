@@ -431,6 +431,20 @@ MATHAPI Mat4 mat4(
     return mat;
 }
 
+MATHAPI Mat3 mat3(
+        float m11, float m12, float m13,
+        float m21, float m22, float m23,
+        float m31, float m32, float m33)
+{
+    Mat3 mat = {{
+        {m11, m21, m31},
+        {m12, m22, m32},
+        {m13, m23, m33},
+    }};        
+
+    return mat;
+}
+
 MATHAPI Mat4 mat4_from_mat3(Mat3 m)
 {
     Mat4 r = {0};
@@ -459,6 +473,15 @@ MATHAPI Vec4 mat4_mul_vec4(Mat4 mat, Vec4 vec)
     return result;
 }
 
+MATHAPI Vec3 mat3_mul_vec3(Mat3 mat, Vec3 vec)
+{
+    Vec3 result = {0};
+    result.x = mat.m11*vec.x + mat.m12*vec.y + mat.m13*vec.z;
+    result.y = mat.m21*vec.x + mat.m22*vec.y + mat.m23*vec.z;
+    result.z = mat.m31*vec.x + mat.m32*vec.y + mat.m33*vec.z;
+    return result;
+}
+
 MATHAPI Vec3 mat4_mul_vec3(Mat4 mat, Vec3 vec)
 {
     Vec3 result = {0};
@@ -471,10 +494,20 @@ MATHAPI Vec3 mat4_mul_vec3(Mat4 mat, Vec3 vec)
 //interprets the Vec3 as vector of homogenous coordinates Vec4 
 //multiplies it with matrix and then returns back the homogenous cordinates normalized result
 //as Vec3
+<<<<<<< Updated upstream
 MATHAPI Vec4 mat4_apply(Mat4 mat, Vec3 vec)
+=======
+MATHAPI Vec3 mat4_apply_normalize(Mat4 mat, Vec3 vec)
+>>>>>>> Stashed changes
 {
     Vec4 homo = vec4(vec, 1);
     return mat4_mul_vec4(mat, homo);
+}
+
+MATHAPI Vec3 mat4_apply(Mat4 mat, Vec3 vec)
+{
+    Vec3 scaled = mat4_mul_vec3(mat, vec);
+    return vec3_add(scaled, mat.col[3].xyz);
 }
 
 MATHAPI Vec4 mat4_col(Mat4 matrix, int64_t column_i) 
@@ -658,6 +691,25 @@ MATHAPI Mat3 mat3_inverse(Mat3 matrix)
     result.m[2][2] =  (M[0][0] * M[1][1] - M[1][0] * M[0][1]) * invdet;
     
     return result;
+}
+
+MATHAPI Mat3 mat3_transpose(Mat3 matrix) 
+{
+	return mat3(
+        matrix.m11, matrix.m21, matrix.m31,
+        matrix.m12, matrix.m22, matrix.m32,
+        matrix.m13, matrix.m23, matrix.m33
+	);
+}
+
+MATHAPI Mat4 mat4_transpose(Mat4 matrix) 
+{
+	return mat4(
+        matrix.m11, matrix.m21, matrix.m31, matrix.m41,
+        matrix.m12, matrix.m22, matrix.m32, matrix.m42,
+        matrix.m13, matrix.m23, matrix.m33, matrix.m43,
+        matrix.m14, matrix.m24, matrix.m34, matrix.m44
+	);
 }
 
 MATHAPI Mat4 mat4_identity() 
