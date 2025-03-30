@@ -103,7 +103,8 @@ typedef struct Debug_Allocator {
 //TODO: thread local list of debug allocators!
 
 EXTERNAL Debug_Allocator debug_allocator_make(Allocator* parent, uint64_t flags); //convenience wrapper for debug_allocator_init
-EXTERNAL void debug_allocator_init(Debug_Allocator* allocator, Allocator* parent, Allocator* internal_allocator, Debug_Allocator_Options options);
+EXTERNAL void debug_allocator_init(Debug_Allocator* allocator, Allocator* parent, uint64_t flags);
+EXTERNAL void debug_allocator_init_options(Debug_Allocator* allocator, Allocator* parent, Allocator* internal_allocator, Debug_Allocator_Options options);
 EXTERNAL void debug_allocator_deinit(Debug_Allocator* allocator);
 
 EXTERNAL void** debug_allocation_get_callstack(const Debug_Allocation* alloc);
@@ -141,7 +142,7 @@ INTERNAL void _debug_allocator_panic(const Debug_Allocator* self, void* user_ptr
 INTERNAL void _debug_allocation_test_dead_zones(const Debug_Allocator* self, const Debug_Allocation* allocation);
 INTERNAL Debug_Allocation* _debug_allocation_get_closest(const Debug_Allocator* self, void* ptr, isize* dist_or_null);
 
-EXTERNAL void debug_allocator_init(Debug_Allocator* self, Allocator* parent, Allocator* internal, Debug_Allocator_Options options)
+EXTERNAL void debug_allocator_init_options(Debug_Allocator* self, Allocator* parent, Allocator* internal, Debug_Allocator_Options options)
 {
     debug_allocator_deinit(self);
     TEST(parent && internal);
@@ -198,7 +199,7 @@ EXTERNAL void debug_allocator_deinit(Debug_Allocator* self)
     memset(self, 0, sizeof *self);
 }
 
-EXTERNAL Debug_Allocator debug_allocator_make(Allocator* parent, uint64_t flags)
+EXTERNAL void debug_allocator_init(Debug_Allocator* allocator, Allocator* parent, uint64_t flags)
 {
     Debug_Allocator_Options options = {0};
     options.pre_dead_zone_size = 8;
@@ -222,8 +223,14 @@ EXTERNAL Debug_Allocator debug_allocator_make(Allocator* parent, uint64_t flags)
     if(flags & DEBUG_ALLOC_CAPTURE_CALLSTACK)
         options.capture_stack_frames_count = 16;
     
+    debug_allocator_init_options(allocator, parent, parent, options);
+}
+
+EXTERNAL Debug_Allocator debug_allocator_make(Allocator* parent, uint64_t flags)
+{
+    REQUIRE((flags & DEBUG_ALLOC_USE) == 0);
     Debug_Allocator allocator = {0};
-    debug_allocator_init(&allocator, parent, parent, options);
+    debug_allocator_init(&allocator, parent, flags);
     return allocator;
 }
 

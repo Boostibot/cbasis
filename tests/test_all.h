@@ -18,6 +18,7 @@
 #include "../mem.h"
 #include "../map.h"
 #include "../utf.h"
+#include "../log.h"
 
 #include "../list.h"
 #include "../path.h"
@@ -78,12 +79,12 @@ static void test_all(double total_time)
         UNIT_TEST(test_path),
         UNIT_TEST(test_log),
         UNIT_TEST(test_match),
+        TIMED_TEST(test_hash),
         TIMED_TEST(test_stable),
         TIMED_TEST(test_map),
         TIMED_TEST(test_base64),
         TIMED_TEST(test_utf),
         TIMED_TEST(test_array),
-        TIMED_TEST(test_hash),
         TIMED_TEST(test_hash),
         TIMED_TEST(test_arena),
         TIMED_TEST(test_math),

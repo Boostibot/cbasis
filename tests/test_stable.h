@@ -2,10 +2,11 @@
 
 #include "../stable.h"
 #include "../allocator_debug.h"
+#include "../time.h"
 
 static void test_stable_unit()
 {
-	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK | DEBUG_ALLOC_USE);
+	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK);
     {
         Stable stable = {0};
         stable_init(&stable, debug_alloc.alloc, sizeof(int32_t));
@@ -66,7 +67,7 @@ INTERNAL int _test_stable_compare(const void* a, const void* b)
 
 INTERNAL void test_stable_stress(double max_seconds)
 {
-	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK | DEBUG_ALLOC_USE | DEBUG_ALLOC_CAPTURE_CALLSTACK);
+	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK | DEBUG_ALLOC_CAPTURE_CALLSTACK);
 	{
 		enum Action {
 			INIT,

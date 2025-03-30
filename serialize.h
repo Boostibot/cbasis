@@ -68,7 +68,10 @@
     #include "string.h"
     #include "allocator.h"
     #include "assert.h"
-    typedef String Ser_String;
+#endif
+
+#ifdef STRING_DEFINED
+    typedef STRING_DEFINED Ser_String;
 #else
     typedef struct Ser_String {
         const char* data;

@@ -8,10 +8,10 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdint.h>
-#include <assert.h>
 #include <stdbool.h>
 
 #if !defined(ASSERT) && !defined(MODULE_ASSERT)
+    #include <assert.h>
     #define ASSERT(x) assert(x)
 #endif // !ASSERT
 
@@ -21,19 +21,11 @@
 #endif
 
 #ifndef TAU
-    #define TAU (PI*2.0f)
+    #define TAU (PI*2)
 #endif
 
 #ifndef MATHAPI
     #define MATHAPI static inline
-#endif
-
-#if defined(_MSC_VER)
-    #define ATTRIBUTE_ALIGNED(bytes)            __declspec(align(bytes))
-#elif defined(__GNUC__) || defined(__clang__)
-    #define ATTRIBUTE_ALIGNED(bytes)            __attribute__((aligned(bytes)))
-#else
-    #define ATTRIBUTE_ALIGNED(align)            _Alignas(align)
 #endif
 
 #ifndef SINIT
@@ -58,7 +50,7 @@ typedef union Vec3 {
     float floats[3];
 } Vec3;
 
-ATTRIBUTE_ALIGNED(16) typedef union Vec4 {
+typedef union Vec4 {
     struct { Vec3 xyz; float _pad1; };
     struct { float _pad2; Vec3 yzw; };
     struct { Vec2 xy; Vec2 zw; };
@@ -80,7 +72,7 @@ typedef union iVec3 {
     int ints[3];
 } iVec3;
 
-ATTRIBUTE_ALIGNED(16) typedef union iVec4 {
+typedef union iVec4 {
     struct { iVec3 xyz; int _pad1; };
     struct { int _pad2; iVec3 yzw; };
     struct { iVec2 xy; iVec2 zw; };
@@ -91,7 +83,7 @@ ATTRIBUTE_ALIGNED(16) typedef union iVec4 {
 
 typedef Vec4 Quat;
 
-ATTRIBUTE_ALIGNED(16) typedef union Mat2 {
+typedef union Mat2 {
     Vec2 col[2];
     float m[2][2];
     struct {
@@ -112,7 +104,7 @@ typedef union Mat3 {
     float floats[9];
 } Mat3;
 
-ATTRIBUTE_ALIGNED(16) typedef union Mat4 {
+typedef union Mat4 {
     Vec4 col[4];
     float m[4][4];
     struct {
@@ -191,6 +183,10 @@ MATHAPI Vec2 vec2_clamp(Vec2 clamped, Vec2 low, Vec2 high) { return vec2_max(low
 MATHAPI Vec3 vec3_clamp(Vec3 clamped, Vec3 low, Vec3 high) { return vec3_max(low, vec3_min(clamped, high)); }
 MATHAPI Vec4 vec4_clamp(Vec4 clamped, Vec4 low, Vec4 high) { return vec4_max(low, vec4_min(clamped, high)); }
 
+MATHAPI Vec2 vec2_mix(Vec2 a1, float s1, Vec2 a2, float s2) { return vec2_add(vec2_scale(a1, s1), vec2_scale(a2, s2)); }
+MATHAPI Vec3 vec3_mix(Vec3 a1, float s1, Vec3 a2, float s2) { return vec3_add(vec3_scale(a1, s1), vec3_scale(a2, s2)); }
+MATHAPI Vec4 vec4_mix(Vec4 a1, float s1, Vec4 a2, float s2) { return vec4_add(vec4_scale(a1, s1), vec4_scale(a2, s2)); }
+
 MATHAPI Vec2 vec2_lerp(Vec2 a, Vec2 b, float t) { return vec2_add(vec2_scale(a, 1 - t), vec2_scale(b, t)); }
 MATHAPI Vec3 vec3_lerp(Vec3 a, Vec3 b, float t) { return vec3_add(vec3_scale(a, 1 - t), vec3_scale(b, t)); }
 MATHAPI Vec4 vec4_lerp(Vec4 a, Vec4 b, float t) { return vec4_add(vec4_scale(a, 1 - t), vec4_scale(b, t)); }
@@ -240,6 +236,10 @@ MATHAPI iVec2 ivec2_clamp(iVec2 clamped, iVec2 low, iVec2 high) { return ivec2_m
 MATHAPI iVec3 ivec3_clamp(iVec3 clamped, iVec3 low, iVec3 high) { return ivec3_max(low, ivec3_min(clamped, high)); }
 MATHAPI iVec4 ivec4_clamp(iVec4 clamped, iVec4 low, iVec4 high) { return ivec4_max(low, ivec4_min(clamped, high)); }
 
+MATHAPI iVec2 ivec2_mix(iVec2 a1, float s1, iVec2 a2, float s2) { return ivec2_add(ivec2_scale(a1, s1), ivec2_scale(a2, s2)); }
+MATHAPI iVec3 ivec3_mix(iVec3 a1, float s1, iVec3 a2, float s2) { return ivec3_add(ivec3_scale(a1, s1), ivec3_scale(a2, s2)); }
+MATHAPI iVec4 ivec4_mix(iVec4 a1, float s1, iVec4 a2, float s2) { return ivec4_add(ivec4_scale(a1, s1), ivec4_scale(a2, s2)); }
+
 MATHAPI iVec2 ivec2_lerp(iVec2 a, iVec2 b, int t) { return ivec2_add(ivec2_scale(a, 1 - t), ivec2_scale(b, t)); }
 MATHAPI iVec3 ivec3_lerp(iVec3 a, iVec3 b, int t) { return ivec3_add(ivec3_scale(a, 1 - t), ivec3_scale(b, t)); }
 MATHAPI iVec4 ivec4_lerp(iVec4 a, iVec4 b, int t) { return ivec4_add(ivec4_scale(a, 1 - t), ivec4_scale(b, t)); }
@@ -255,9 +255,6 @@ MATHAPI iVec4 ivec4_from_vec(Vec4 a)    { return ivec4((int)a.x, (int)a.y, (int)
 MATHAPI Vec2 vec2_from_ivec(iVec2 a)    { return vec2((float)a.x, (float)a.y); }
 MATHAPI Vec3 vec3_from_ivec(iVec3 a)    { return vec3((float)a.x, (float)a.y, (float)a.z); }
 MATHAPI Vec4 vec4_from_ivec(iVec4 a)    { return vec4((float)a.x, (float)a.y, (float)a.z, (float)a.w); }
-
-MATHAPI Vec4 vec4_homo_from_vec3(Vec3 a)  { return vec4(a.x, a.y, a.z, 1); }
-MATHAPI Vec3 vec3_from_vec4_homo(Vec4 a)  { return vec3(a.x/a.w, a.y/a.w, a.z/a.w); }
 
 MATHAPI float to_radiansf(float degrees)
 {
@@ -474,12 +471,10 @@ MATHAPI Vec3 mat4_mul_vec3(Mat4 mat, Vec3 vec)
 //interprets the Vec3 as vector of homogenous coordinates Vec4 
 //multiplies it with matrix and then returns back the homogenous cordinates normalized result
 //as Vec3
-MATHAPI Vec3 mat4_apply(Mat4 mat, Vec3 vec)
+MATHAPI Vec4 mat4_apply(Mat4 mat, Vec3 vec)
 {
-    Vec4 homo = vec4_homo_from_vec3(vec);
-    Vec4 muled = mat4_mul_vec4(mat, homo);
-    Vec3 result = vec3_from_vec4_homo(muled);
-    return result;
+    Vec4 homo = vec4(vec, 1);
+    return mat4_mul_vec4(mat, homo);
 }
 
 MATHAPI Vec4 mat4_col(Mat4 matrix, int64_t column_i) 
@@ -853,15 +848,15 @@ MATHAPI Mat4 mat4_inverse_nonuniform_scale(Mat4 mat)
 }
 
 //Makes a perspective projection matrix so that the output is in ranage [-1, 1] in all dimensions (OpenGL standard)
-MATHAPI Mat4 mat4_perspective_projection(float fov_radians, float width_over_height, float near, float far) 
+MATHAPI Mat4 mat4_perspective_projection(float fov_radians, float width_over_height, float near_plane, float far_plane) 
 { 
     ASSERT(fov_radians != 0);
-    ASSERT(near != far);
+    ASSERT(near_plane != far_plane);
     ASSERT(width_over_height != 0);
 
     //https://ogldev.org/www/tutorial12/tutorial12.html
 	float fo = 1.0f / tanf(fov_radians / 2.0f);
-	float ar = width_over_height, n = near, f = far;
+	float ar = width_over_height, n = near_plane, f = far_plane;
 	Mat4 result = mat4(
 		 fo / ar,     0,           0,            0,
 		 0,           fo,          0,            0,
@@ -871,13 +866,13 @@ MATHAPI Mat4 mat4_perspective_projection(float fov_radians, float width_over_hei
     return result;
 } 
 
-MATHAPI Mat4 mat4_ortographic_projection(float bottom, float top, float left, float right, float near, float far) 
+MATHAPI Mat4 mat4_ortographic_projection(float bottom, float top, float left, float right, float near_plane, float far_plane) 
 {
     ASSERT(bottom != top);
     ASSERT(left != right);
-    ASSERT(near != far);
+    ASSERT(near_plane != far_plane);
 
-    float l = left, r = right, b = bottom, t = top, n = near, f = far;
+    float l = left, r = right, b = bottom, t = top, n = near_plane, f = far_plane;
 	float tx = -(r + l) / (r - l);
 	float ty = -(t + b) / (t - b);
 	float tz = -(f + n) / (f - n);
@@ -922,7 +917,6 @@ MATHAPI Mat4 mat4_look_at(Vec3 camera_pos, Vec3 camera_target, Vec3 camera_up_di
     );
 }
 
-
 MATHAPI Quat quat_make(Vec3 axis, float rotation_angle_rads)
 {
     float sin_theta = sinf(rotation_angle_rads/2);
@@ -957,86 +951,61 @@ MATHAPI Quat quat_conjugate(Quat q)
 
 MATHAPI Quat quat_inverse(Quat q)
 {
-    float len = quat_len(q);
-    if(len == 0)
+    float len2 = vec4_dot(q, q);
+    if(len2 == 0)
         return q;
     else
-        return vec4(-q.x/len, -q.y/len, -q.z/len, q.w);
+        return vec4(-q.x/len2, -q.y/len2, -q.z/len2, q.w/len2);
 }
 
 //if we want to rotate quaternion Q by quaternion q relative to global reference frame we do qQ
 //if we want to rotate quaternion Q by quaternion q relative to Q's reference frame we do Qq
 MATHAPI Quat quat_mul(Quat q1, Quat q2)
 {
+    Quat out = {0};
+    out.x = q1.floats[3] * +q2.floats[0];
+    out.y = q1.floats[2] * -q2.floats[0];
+    out.z = q1.floats[1] * +q2.floats[0];
+    out.w = q1.floats[0] * -q2.floats[0];
+
+    out.x += q1.floats[2] * +q2.floats[1];
+    out.y += q1.floats[3] * +q2.floats[1];
+    out.z += q1.floats[0] * -q2.floats[1];
+    out.w += q1.floats[1] * -q2.floats[1];
+
+    out.x += q1.floats[1] * -q2.floats[2];
+    out.y += q1.floats[0] * +q2.floats[2];
+    out.z += q1.floats[3] * +q2.floats[2];
+    out.w += q1.floats[2] * -q2.floats[2];
+
+    out.x += q1.floats[0] * +q2.floats[3];
+    out.y += q1.floats[1] * +q2.floats[3];
+    out.z += q1.floats[2] * +q2.floats[3];
+    out.w += q1.floats[3] * +q2.floats[3];
+    return out;
+
     float r1 = q1.w;
     float r2 = q2.w;
     Vec3 v1 = q1.xyz;
     Vec3 v2 = q2.xyz;
 
     float r = r1*r2 - vec3_dot(v1, v2);
-    Vec3 v = vec3_add(vec3_add(vec3_scale(v2, r1), vec3_scale(v1, r2)), vec3_cross(v1, v2));
+    Vec3 v = vec3_add(vec3_mix(v2, r1, v1, r2), vec3_cross(v1, v2));
     return vec4(v, r);
 }
 
 MATHAPI Vec3 quat_local_to_global(Quat q, Vec3 local)
 {
     Quat localq = vec4(local, 0);
-    Quat gloabalq = quat_mul(quat_mul(q, localq), quat_conjugate(q));
-    return gloabalq.xyz;
+    Quat globalq = quat_mul(quat_mul(q, localq), quat_conjugate(q));
+    return globalq.xyz;
 }
 
-MATHAPI Vec3 quat_global_to_local(Quat q, Vec3 local)
+MATHAPI Vec3 quat_global_to_local(Quat q, Vec3 global)
 {
-    Quat localq = vec4(local, 0);
-    Quat gloabalq = quat_mul(quat_mul(quat_conjugate(q), localq), q);
-    return gloabalq.xyz;
-}
-
-//see here: https://math.stackexchange.com/a/939288
-//see wiki quaternion article: https://en.wikipedia.org/wiki/Quaternion#Functions_of_a_quaternion_variable
-MATHAPI Quat quat_exp(Quat q)
-{
-    float r = q.w;
-    Vec3 v = q.xyz;
-    float v_len = vec3_len(v);
-    float exp_r = expf(r);
-    if(v_len == 0)
-        return vec4(0, 0, 0, exp_r);
-    else
-    {
-        float cosv = cosf(v_len);
-        float sinv = sinf(v_len);
-        float frac = sinv / v_len;
-
-        return vec4(frac*v.x, frac*v.y, frac*v.z, cosv*exp_r);
-    }
-}
-
-MATHAPI Quat quat_ln(Quat q)
-{
-    float r = q.w;
-    Vec3 v = q.xyz;
-    float v_len2 = vec3_dot(v, v);
-    float q_len2 = v_len2 + r*r;
-
-    if(q_len2 == 0)
-        return vec4(0, 0, 0, 0);
-        
-    float q_len = sqrtf(q_len2);
-    float v_len = sqrtf(v_len2);
-    float ln_len_q = logf(q_len);
-    if(v_len == 0)
-        return vec4(0, 0, 0, ln_len_q);
-
-    float arccosq = acosf(r/q_len);
-    float frac = arccosq/v_len;
-
-    return vec4(frac*v.x, frac*v.y, frac*v.z, ln_len_q);
-}
-
-MATHAPI Quat quat_pow_simp(Quat q, float t)
-{
-    return quat_exp(quat_scale(quat_ln(q), t));
+    Quat globalq = vec4(global, 0);
+    Quat localq = quat_mul(quat_mul(quat_conjugate(q), globalq), q);
+    return localq.xyz;
 }
 
 #include <math.h>
@@ -1045,19 +1014,22 @@ MATHAPI Quat quat_pow(Quat q, float t)
     if(t == 0)
         return vec4(0, 0, 0, 1);
     
-    float r = q.w;
+    if(q.w < 0)
+        q = quat_scale(q, -1);
+
     Vec3 v = q.xyz;
+    float r = q.w;
     float v_len2 = vec3_dot(v, v);
     float q_len2 = v_len2 + r*r;
     if(v_len2 == 0)
-        return vec4(0, 0, 0, powf(fabsf(r), t));
+        return vec4(0, 0, 0, powf(r, t)); 
 
     float q_len = sqrtf(q_len2);
     float v_len = sqrtf(v_len2);
     float power = powf(q_len, t);
 
-    //r/g_len is in (-1, 1) (cannot be -1/1 since v_len != 0)
-    //thus theta is in (0, pi)
+    //r/g_len is in (0, 1) (cannot be 1 since v_len != 0 thus q_len > r)
+    //thus theta is in (0, pi/2)
     float theta = acosf(r/q_len); 
     float phi = theta/t; 
 
@@ -1068,44 +1040,10 @@ MATHAPI Quat quat_pow(Quat q, float t)
     return vec4(frac*v.x, frac*v.y, frac*v.z, power*cos_phi);
 }
 
-MATHAPI Quat quat_pow_norm(Quat q, float t)
-{
-    if(t == 0)
-        return vec4(0, 0, 0, 1);
-
-    float r = q.w;
-    Vec3 v = q.xyz;
-    float v_len2 = vec3_dot(v, v);
-    if(v_len2 == 0)
-        return vec4(0, 0, 0, powf(fabsf(r), t));
-
-    float v_len = sqrtf(v_len2);
-
-    //r/g_len is in (-1, 1) (cannot be -1/1 since v_len != 0)
-    //thus theta is in (0, pi)
-    float theta = acosf(r); 
-    float phi = theta/t; 
-
-    float cos_phi = cosf(phi); 
-    float sin_phi = sinf(phi);
-
-    float frac = sin_phi/v_len;
-    return vec4(frac*v.x, frac*v.y, frac*v.z, cos_phi);
-}
-
-//lerps between normalized quaternions a and b
-MATHAPI Quat quat_lerp_norm(Quat a, Quat b, float t)
+MATHAPI Quat quat_lerp(Quat a, Quat b, float t)
 {
     //lerp(a, b, t) = a*(a^-1 * b)^t
     //              = a*pow(a^-1 * b)^t
-    Quat a_inv_b = quat_mul(quat_conjugate(a), b);
-    Quat pow_t = quat_pow_norm(a_inv_b, t);
-    Quat lerped = quat_mul(a, pow_t);
-    return lerped;
-}
-
-MATHAPI Quat quat_lerp(Quat a, Quat b, float t)
-{
     Quat a_inv_b = quat_mul(quat_inverse(a), b);
     Quat pow_t = quat_pow(a_inv_b, t);
     Quat lerped = quat_mul(a, pow_t);

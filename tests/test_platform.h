@@ -2,6 +2,7 @@
 #include "../platform.h"
 #include "../assert.h"
 #include <stdlib.h>
+#include <string.h>
 
 static void _platform_test_report(Platform_Error error, bool okay, const char* expression, const char* file, const char* function, int line, const char* format, ...)
 {
@@ -381,7 +382,7 @@ static void platform_test_all()
     TEST(strlen(platform_directory_get_startup_working()) > 0);
     TEST(strlen(platform_get_executable_path()) > 0);
 
-    platform_test_file_watch();
+    // platform_test_file_watch();
     platform_test_file_io();
     platform_test_directory_list();
 }

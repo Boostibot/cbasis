@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 #ifdef MODULE_ALL_COUPLED
     #include "assert.h"
@@ -15,11 +16,17 @@
 typedef int64_t isize;
 typedef void* (*Allocator)(void* alloc, int mode, int64_t new_size, void* old_ptr, int64_t old_size, int64_t align, void* other);
 
+
 //Slice-like string. 
-typedef struct String {
-    const char* data;
-    isize count;
-} String;
+#ifndef STRING_DEFINED
+    #define STRING_DEFINED String
+    typedef struct String {
+        const char* data;
+        isize count;
+    } String;
+#else
+    typedef STRING_DEFINED String;
+#endif
 
 //A dynamically resizeable string. Its data member is always null terminated. 
 // (as long as it was properly initialized - ie. not in = {0} state)
@@ -74,11 +81,6 @@ EXTERNAL isize  string_find_last(String in_str, String search_for, isize from); 
 EXTERNAL isize  string_find_first_char(String in_str, char search_for, isize from); //same but only searches a single char
 EXTERNAL isize  string_find_last_char(String in_str, char search_for, isize from); //same but only searches a single char
 
-EXTERNAL isize  string_find_first_or(String in_str, String search_for, isize from, isize if_not_found);
-EXTERNAL isize  string_find_last_or(String in_str, String search_for, isize from, isize if_not_found);
-EXTERNAL isize  string_find_first_char_or(String in_str, char search_for, isize from, isize if_not_found);
-EXTERNAL isize  string_find_last_char_or(String in_str, char search_for, isize from, isize if_not_found);
-
 EXTERNAL isize  string_null_terminate(char* buffer, isize buffer_size, String string);  //writes into buffer at max buffer_size chars from string. returns the amount of chars written not including null termination.
 EXTERNAL String string_allocate(Allocator* alloc, String string);
 EXTERNAL void   string_deallocate(Allocator* alloc, String* string);
@@ -125,9 +127,9 @@ EXTERNAL String_Builder _format(Allocator* alloc, const char* format, ...);
 //ptrs - these functions do the exact same thing as their non ptrs counterparts except take pointers, which is sometimes
 // useful for things like qsort or my map implementation
 EXTERNAL int  string_compare_ptrs(const String* a, const String* b); 
+EXTERNAL int  builder_compare_ptrs(const String_Builder* a, const String_Builder* b);
 EXTERNAL bool string_is_equal_ptrs(const String* a, const String* b);
 EXTERNAL bool builder_is_equal_ptrs(const String_Builder* a, const String_Builder* b);
-EXTERNAL int  builder_compare_ptrs(const String_Builder* a, const String_Builder* b);
 
 EXTERNAL bool char_is_space(char c);    
 EXTERNAL bool char_is_digit(char c); //[0-9]
@@ -224,10 +226,10 @@ EXTERNAL bool line_iterator_next(Line_Iterator* iterator, String string);
     }
     #undef _CLAMP
 
-    EXTERNAL isize string_find_first_or(String in_str, String search_for, isize from, isize if_not_found)
+    EXTERNAL isize string_find_first(String in_str, String search_for, isize from)
     {
         if(from < 0 || from + search_for.count > in_str.count)
-            return if_not_found;
+            return -1;
         
         if(search_for.count == 0)
             return from;
@@ -236,7 +238,7 @@ EXTERNAL bool line_iterator_next(Line_Iterator* iterator, String string);
         {
             const char* found = (const char*) memchr(in_str.data + from, search_for.data[0], (size_t) (in_str.count - from));
             if(found == NULL)
-                return if_not_found;
+                return -1;
             return found - in_str.data;
         }
 
@@ -250,7 +252,7 @@ EXTERNAL bool line_iterator_next(Line_Iterator* iterator, String string);
 
             found = (const char*) memchr(found, first_char, (size_t) remaining_length);
             if(found == NULL)
-                return if_not_found;
+                return -1;
                 
             char last_char_of_found = found[search_for.count - 1];
             if (last_char_of_found == last_char)
@@ -260,13 +262,13 @@ EXTERNAL bool line_iterator_next(Line_Iterator* iterator, String string);
             found += 1;
         }
 
-        return if_not_found;
+        return -1;
     }
 
-    EXTERNAL isize string_find_last_or(String in_str, String search_for, isize from, isize if_not_found)
+    EXTERNAL isize string_find_last_or(String in_str, String search_for, isize from)
     {
         if(from < 0 || from + search_for.count > in_str.count)
-            return if_not_found;
+            return -1;
 
         if(search_for.count == 0)
             return from;
@@ -276,44 +278,27 @@ EXTERNAL bool line_iterator_next(Line_Iterator* iterator, String string);
                 if(memcmp(in_str.data + i, search_for.data, search_for.count) == 0)
                     return i;
 
-        return if_not_found;
+        return -1;
     }
     
-    EXTERNAL isize string_find_first_char_or(String string, char search_for, isize from, isize if_not_found)
+    EXTERNAL isize string_find_first_char(String string, char search_for, isize from)
     {
         if(from < 0 || from >= string.count)
-            return if_not_found;
+            return -1;
         char* ptr = (char*) memchr(string.data + from, search_for, (size_t) (string.count - from));
-        return ptr ? (isize) (ptr - string.data) : if_not_found; 
+        return ptr ? (isize) (ptr - string.data) : -1; 
     }
     
-    EXTERNAL isize string_find_last_char_or(String in_str, char search_for, isize from, isize if_not_found)
+    EXTERNAL isize string_find_last_char(String in_str, char search_for, isize from)
     {
         if(from < 0 || from >= in_str.count)
-            return if_not_found;
+            return -1;
             
         for(isize i = in_str.count; i-- > from; )
             if(in_str.data[i] == search_for)
                 return i;
 
-        return if_not_found;
-    }
-    
-    EXTERNAL isize string_find_first(String in_str, String search_for, isize from)
-    {
-        return string_find_first_or(in_str, search_for, from, -1);
-    }
-    EXTERNAL isize string_find_last(String in_str, String search_for, isize from)
-    {
-        return string_find_last_or(in_str, search_for, from, -1);
-    }
-    EXTERNAL isize string_find_first_char(String in_str, char search_for, isize from)
-    {
-        return string_find_first_char_or(in_str, search_for, from, -1);
-    }
-    EXTERNAL isize string_find_last_char(String in_str, char search_for, isize from)
-    {
-        return string_find_last_char_or(in_str, search_for, from, -1);
+        return -1;
     }
     
     EXTERNAL int string_compare(String a, String b)

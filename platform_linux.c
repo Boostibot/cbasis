@@ -797,23 +797,15 @@ Platform_Error platform_file_read(Platform_File* file, void* buffer, isize size,
 {
     bool state = false;
     isize total_read = 0;
-    if(file->handle)
-    {
-        for(; total_read < size;)
-        {
+    if(file->handle) {
+        for(; total_read < size;) {
             ssize_t bytes_read = pread(_platform_fd(file), (unsigned char*)buffer + total_read, (size_t) (size - total_read), offset);
-            //eof
-            if(bytes_read == 0) {
-                state = true;
+            if(bytes_read <= 0) //eof or error
                 break;
-            }
-            if(bytes_read == -1) {
-                state = false;
-                break;
-            }
-
             total_read += bytes_read;
         }
+
+        state = total_read == size;
     }
 
     if(read_bytes_because_eof)
@@ -1050,7 +1042,7 @@ static void _platform_paths_init()
 
 const char* platform_directory_get_startup_working()
 {
-    if(g_startup_cwd)
+    if(g_startup_cwd == NULL)
         g_startup_cwd = getcwd(NULL, 0);
     return g_startup_cwd;
 }
@@ -1115,20 +1107,19 @@ Platform_Error platform_directory_iter_init(Platform_Directory_Iter* iter, Platf
 
 bool platform_directory_iter_next(Platform_Directory_Iter* iter)
 {
-    if(iter->internal)
-    {
+    if(iter->internal) {
         for(;;) {
-
-
             Dir_Iter* it = (Dir_Iter*) iter->internal; 
             struct dirent* ent = readdir(it->dir);
-            if(ent) {
-                iter->index += 1;
+            if(ent && strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
                 it->entry = *ent;
+                iter->index += 1;
                 iter->path.data = it->entry.d_name;
                 iter->path.count = strlen(it->entry.d_name);
                 return true;
             }
+            if(ent == NULL)
+                break;
         }
     }
     return false;
@@ -1149,6 +1140,20 @@ void platform_directory_iter_deinit(Platform_Directory_Iter* iter)
 //=========================================
 // File Watch
 //=========================================
+
+Platform_Error platform_file_watch_init(Platform_File_Watch* file_watch, int32_t flags, Platform_String path, isize buffer_size)
+{
+    return PLATFORM_ERROR_OTHER;
+}
+void platform_file_watch_deinit(Platform_File_Watch* file_watch)
+{
+
+}
+bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Watch_Event* event, Platform_Error* error_or_null)
+{
+    return false;
+}
+
 #if 0
 #include <sys/inotify.h>
 

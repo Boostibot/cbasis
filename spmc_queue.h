@@ -30,6 +30,7 @@
 #ifndef SPMC_QUEUE_API
     #define SPMC_QUEUE_API_INLINE         SPMC_QUEUE_INLINE_ALWAYS static
     #define SPMC_QUEUE_API                static
+    #define SPMC_QUEUE_CACHE_LINE         64
     #define MODULE_SPMC_QUEUE_IMPL
 #endif
 
@@ -56,21 +57,20 @@ typedef struct SPMC_Queue_Block {
 } SPMC_Queue_Block;
 
 typedef struct SPMC_Queue {
-    alignas(64)
-    SPMC_QUEUE_ATOMIC(uint64_t) top; //changed by pop
-    SPMC_QUEUE_ATOMIC(uint64_t) estimate_bot;
-    uint64_t _pad1[6];
+    alignas(SPMC_QUEUE_CACHE_LINE) struct {
+        SPMC_QUEUE_ATOMIC(SPMC_Queue_Block*) block;
+        SPMC_QUEUE_ATOMIC(uint64_t)          tail;
+        SPMC_QUEUE_ATOMIC(uint64_t)          estimate_head;
+        isize item_size;
+    } pop;
 
-    alignas(64)
-    SPMC_QUEUE_ATOMIC(uint64_t) bot; //changed by push
-    uint64_t estimate_top;
-    uint64_t _pad2[6];
-
-    alignas(64)
-    SPMC_QUEUE_ATOMIC(SPMC_Queue_Block*) block;
-    SPMC_QUEUE_ATOMIC(uint32_t) item_size;
-    SPMC_QUEUE_ATOMIC(uint32_t) max_capacity_log2; //0 means max capacity off!
-    uint64_t _pad3[6];
+    alignas(SPMC_QUEUE_CACHE_LINE) struct {
+        SPMC_Queue_Block*           block;
+        uint64_t                    estimate_tail;
+        SPMC_QUEUE_ATOMIC(uint64_t) head;
+        isize item_size;
+        isize max_capacity; //zero or negative means no max capacity
+    } push;
 } SPMC_Queue;
 
 SPMC_QUEUE_API void spmc_queue_deinit(SPMC_Queue* queue);
@@ -80,7 +80,12 @@ SPMC_QUEUE_API_INLINE bool spmc_queue_push_st(SPMC_Queue *q, const void* item, i
 SPMC_QUEUE_API_INLINE bool spmc_queue_pop_st(SPMC_Queue *q, void* item, isize item_size);
 SPMC_QUEUE_API_INLINE bool spmc_queue_pop(SPMC_Queue *q, void* item, isize item_size);
 SPMC_QUEUE_API_INLINE isize spmc_queue_capacity(const SPMC_Queue *q);
-SPMC_QUEUE_API_INLINE isize spmc_queue_count(const SPMC_Queue *q);
+SPMC_QUEUE_API_INLINE isize spmc_queue_count(const SPMC_Queue *q); //returns the count of items in the queue sometime in the execution history.
+
+//return the upper/lower estimate of the number of items in the queue. 
+//When called from push thread both of these are exact and interchangable
+SPMC_QUEUE_API_INLINE isize spmc_queue_count_upper(const SPMC_Queue *q); 
+SPMC_QUEUE_API_INLINE isize spmc_queue_count_lower(const SPMC_Queue *q); 
 
 //Result interface - is sometimes needed when using this queue as a building block for other DS
 typedef enum SPMC_Queue_State{
@@ -90,11 +95,13 @@ typedef enum SPMC_Queue_State{
     SPMC_QUEUE_FAILED_RACE, //only returned from spmc_queue_result_pop_weak functions
 } SPMC_Queue_State;
 
-//contains the state indicator as well as block, bot, top 
+//contains the state indicator as well as block, head, tail 
 // which hold values obtained *before* the call to the said function
+//When doing push operation, tail might be an estimate
+//When doing a pop operation, head might be an estimate
 typedef struct SPMC_Queue_Result {
-    uint64_t bot;
-    uint64_t top;
+    uint64_t head;
+    uint64_t tail;
     SPMC_Queue_State state;
     int _;
 } SPMC_Queue_Result;
@@ -130,29 +137,24 @@ SPMC_QUEUE_API_INLINE SPMC_Queue_Result spmc_queue_result_pop_weak(SPMC_Queue *q
 
 SPMC_QUEUE_API void spmc_queue_deinit(SPMC_Queue* queue)
 {
-    for(SPMC_Queue_Block* curr = queue->block; curr; )
-    {
+    for(SPMC_Queue_Block* curr = queue->push.block; curr; ) {
         SPMC_Queue_Block* next = curr->next;
         free(curr);
         curr = next;
     }
+
     memset(queue, 0, sizeof *queue);
-    atomic_store(&queue->block, NULL);
+    atomic_store(&queue->pop.block, NULL);
 }
 
 SPMC_QUEUE_API void spmc_queue_init(SPMC_Queue* queue, isize item_size, isize max_capacity_or_negative_if_infinite)
 {
+    ASSERT(0 < item_size && item_size <= UINT32_MAX);
     spmc_queue_deinit(queue);
-    queue->item_size = (uint32_t) item_size;
-    if(max_capacity_or_negative_if_infinite >= 0)
-    {
-        while((uint64_t) 1 << queue->max_capacity_log2 < (uint64_t) max_capacity_or_negative_if_infinite)
-            queue->max_capacity_log2 ++;
-
-        queue->max_capacity_log2 ++;
-    }
-
-    atomic_store(&queue->block, NULL);
+    queue->push.max_capacity = max_capacity_or_negative_if_infinite;
+    queue->push.item_size = item_size;
+    queue->pop.item_size = item_size;
+    atomic_store(&queue->pop.block, NULL);
 }
 
 SPMC_QUEUE_API_INLINE void* _spmc_queue_slot(SPMC_Queue_Block* block, uint64_t i, isize item_size)
@@ -165,13 +167,12 @@ SPMC_QUEUE_API_INLINE void* _spmc_queue_slot(SPMC_Queue_Block* block, uint64_t i
 SPMC_QUEUE_INLINE_NEVER
 SPMC_QUEUE_API SPMC_Queue_Block* _spmc_queue_reserve(SPMC_Queue* queue, isize to_size)
 {
-    SPMC_Queue_Block* old_block = atomic_load(&queue->block);
+    _SPMC_QUEUE_USE_ATOMICS;
+    SPMC_Queue_Block* old_block = queue->push.block;
     SPMC_Queue_Block* out_block = old_block;
     isize old_cap = old_block ? (isize) (old_block->mask + 1) : 0;
-    isize item_size = queue->item_size;
-    isize max_capacity = queue->max_capacity_log2 > 0 
-        ? (isize) 1 << (queue->max_capacity_log2 - 1) 
-        : INT64_MAX;
+    isize item_size = queue->push.item_size;
+    isize max_capacity = queue->push.max_capacity >= 0 ? queue->push.max_capacity : INT64_MAX;
 
     if(old_cap < to_size && to_size <= max_capacity)
     {
@@ -187,13 +188,14 @@ SPMC_QUEUE_API SPMC_Queue_Block* _spmc_queue_reserve(SPMC_Queue* queue, isize to
 
             if(old_block)
             {
-                uint64_t t = atomic_load(&queue->top);
-                uint64_t b = atomic_load(&queue->bot);
-                for(uint64_t i = t; (int64_t) (i - b) < 0; i++) //i < b
+                uint64_t tail = atomic_load_explicit(&queue->pop.tail, memory_order_seq_cst);
+                uint64_t head = atomic_load_explicit(&queue->push.head, memory_order_relaxed);
+                for(uint64_t i = tail; (int64_t) (i - head) < 0; i++) //i < head
                     memcpy(_spmc_queue_slot(new_block, i, item_size), _spmc_queue_slot(old_block, i, item_size), item_size);
             }
 
-            atomic_store(&queue->block, new_block);
+            queue->push.block = new_block;
+            atomic_store_explicit(&queue->pop.block, new_block, memory_order_seq_cst);
             out_block = new_block;
         }
         
@@ -210,66 +212,68 @@ SPMC_QUEUE_API void spmc_queue_reserve(SPMC_Queue* queue, isize to_size)
 SPMC_QUEUE_API_INLINE SPMC_Queue_Result spmc_queue_result_push_st(SPMC_Queue *q, const void* item, isize item_size)
 {
     _SPMC_QUEUE_USE_ATOMICS;
-    ASSERT(atomic_load_explicit(&q->item_size, memory_order_relaxed) == item_size);
+    ASSERT(q->push.item_size == item_size);
 
-    SPMC_Queue_Block *a = atomic_load_explicit(&q->block, memory_order_relaxed);
-    uint64_t b = atomic_load_explicit(&q->bot, memory_order_relaxed);
-    uint64_t t = q->estimate_top;
+    SPMC_Queue_Block *block = q->push.block;
+    uint64_t head = atomic_load_explicit(&q->push.head, memory_order_relaxed);
+    uint64_t tail = q->push.estimate_tail;
 
-    if (a == NULL || (int64_t)(b - t) > (int64_t) a->mask) { 
-        t = atomic_load_explicit(&q->top, memory_order_acquire);
-        q->estimate_top = t;
-        if (a == NULL || (int64_t)(b - t) > (int64_t) a->mask) { 
-            SPMC_Queue_Block* new_a = _spmc_queue_reserve(q, b - t + 1);
-            if(new_a == a)
-            {
-                SPMC_Queue_Result out = {b, t, SPMC_QUEUE_FULL};
+    if (block == NULL || (int64_t)(head - tail) > (int64_t) block->mask) { 
+        tail = atomic_load_explicit(&q->pop.tail, memory_order_acquire);
+        q->push.estimate_tail = tail;
+        if (block == NULL || (int64_t)(head - tail) > (int64_t) block->mask) { 
+            SPMC_Queue_Block* new_block = _spmc_queue_reserve(q, head - tail + 1);
+            //if allocation failed (normally or because we set max capacity)
+            if(new_block == block) {
+                SPMC_Queue_Result out = {head, tail, SPMC_QUEUE_FULL};
                 return out;
             }
 
-            a = new_a;
+            block = new_block;
         }
     }
     
-    void* slot = _spmc_queue_slot(a, b, item_size);
+    void* slot = _spmc_queue_slot(block, head, item_size);
     memcpy(slot, item, item_size);
 
-    atomic_store_explicit(&q->bot, b + 1, memory_order_release);
-    SPMC_Queue_Result out = {b, t, SPMC_QUEUE_OK};
+    atomic_store_explicit(&q->push.head, head + 1, memory_order_release);
+    SPMC_Queue_Result out = {head, tail, SPMC_QUEUE_OK};
     return out;
 }
 
 SPMC_QUEUE_API_INLINE SPMC_Queue_Result spmc_queue_result_pop_st(SPMC_Queue *q, void* item, isize item_size)
 {
     _SPMC_QUEUE_USE_ATOMICS;
-    ASSERT(atomic_load_explicit(&q->item_size, memory_order_relaxed) == item_size);
-    uint64_t t = atomic_load_explicit(&q->top, memory_order_relaxed);
-    uint64_t b = atomic_load_explicit(&q->estimate_bot, memory_order_relaxed);
+    ASSERT(q && q->pop.item_size == item_size);
+    uint64_t tail = atomic_load_explicit(&q->pop.tail, memory_order_relaxed);
+    uint64_t head = atomic_load_explicit(&q->pop.estimate_head, memory_order_relaxed);
     
-    SPMC_Queue_Result out = {b, t, SPMC_QUEUE_EMPTY};
+    SPMC_Queue_Result out = {head, tail, SPMC_QUEUE_EMPTY};
 
-    //if empty reload bot estimate
-    if ((int64_t) (b - t) <= 0) {
-        b = atomic_load_explicit(&q->bot, memory_order_relaxed);
-        atomic_store_explicit(&q->estimate_bot, b, memory_order_relaxed);
-        out.bot = b;
-        if ((int64_t) (b - t) <= 0) 
+    //if empty reload head estimate
+    if ((int64_t) (head - tail) <= 0) {
+        head = atomic_load_explicit(&q->push.head, memory_order_relaxed);
+        atomic_store_explicit(&q->pop.estimate_head, head, memory_order_relaxed);
+        out.head = head;
+        if ((int64_t) (head - tail) <= 0) 
             return out;
     }
     
-    //seq cst because we must ensure we dont get updated t,b and old block! 
+    //seq cst because we must ensure we dont get updated tail,head and old block! 
     // Then we would assume there are items to pop, copy over uninitialized memory from old block and succeed. (bad!)
     // For x86 the generated assembly is identical even if we replace it by memory_order_acquire.
     // For weak memory model architectures it wont be. 
-    // If you dont like this you can instead store all of the fields of queue (top, estimate_bot, bot...)
-    //  in the block header instead. That way it will be again impossible to get top, bot and old block.
+    // If you dont like this you can instead store all of the fields of queue (tail, estimate_head, head...)
+    //  in the block header instead. That way it will be again impossible to get tail, head and old block.
     //  I dont bother with this as I primarily care about x86 and I find the code written like this be easier to read. 
-    SPMC_Queue_Block *a = atomic_load_explicit(&q->block, memory_order_seq_cst);
+    SPMC_Queue_Block *block = atomic_load_explicit(&q->pop.block, memory_order_seq_cst);
 
-    void* slot = _spmc_queue_slot(a, t, item_size);
-    memcpy(item, slot, item_size);
+    if(item) {
+        void* slot = _spmc_queue_slot(block, tail, item_size);
+        memcpy(item, slot, item_size);
+    }
 
-    atomic_store_explicit(&q->top, t + 1, memory_order_relaxed);
+    atomic_store_explicit(&q->pop.tail, tail + 1, memory_order_relaxed);
     out.state = SPMC_QUEUE_OK;
 
     return out;
@@ -278,27 +282,29 @@ SPMC_QUEUE_API_INLINE SPMC_Queue_Result spmc_queue_result_pop_st(SPMC_Queue *q, 
 SPMC_QUEUE_API_INLINE SPMC_Queue_Result spmc_queue_result_pop_weak(SPMC_Queue *q, void* item, isize item_size)
 {
     _SPMC_QUEUE_USE_ATOMICS;
-    ASSERT(atomic_load_explicit(&q->item_size, memory_order_relaxed) == item_size);
-    uint64_t t = atomic_load_explicit(&q->top, memory_order_relaxed);
-    uint64_t b = atomic_load_explicit(&q->estimate_bot, memory_order_relaxed);
+    ASSERT(q && q->pop.item_size == item_size);
+    uint64_t tail = atomic_load_explicit(&q->pop.tail, memory_order_relaxed);
+    uint64_t head = atomic_load_explicit(&q->pop.estimate_head, memory_order_relaxed);
     
-    SPMC_Queue_Result out = {b, t, SPMC_QUEUE_EMPTY};
+    SPMC_Queue_Result out = {head, tail, SPMC_QUEUE_EMPTY};
 
-    //if empty reload bot estimate
-    if ((int64_t) (t - b) >= 0) {
-        b = atomic_load_explicit(&q->bot, memory_order_relaxed);
-        atomic_store_explicit(&q->estimate_bot, b, memory_order_relaxed);
-        out.bot = b;
-        if ((int64_t) (t - b) >= 0) 
+    //if empty reload head estimate
+    if ((int64_t) (tail - head) >= 0) {
+        head = atomic_load_explicit(&q->push.head, memory_order_relaxed);
+        atomic_store_explicit(&q->pop.estimate_head, head, memory_order_relaxed);
+        out.head = head;
+        if ((int64_t) (tail - head) >= 0) 
             return out;
     }
     
-    SPMC_Queue_Block *a = atomic_load_explicit(&q->block, memory_order_seq_cst);
+    SPMC_Queue_Block *block = atomic_load_explicit(&q->pop.block, memory_order_seq_cst);
 
-    void* slot = _spmc_queue_slot(a, t, item_size);
-    memcpy(item, slot, item_size);
+    if(item) {
+        void* slot = _spmc_queue_slot(block, tail, item_size);
+        memcpy(item, slot, item_size);
+    }
 
-    if (!atomic_compare_exchange_strong_explicit(&q->top, &t, t + 1, memory_order_seq_cst, memory_order_relaxed))
+    if (!atomic_compare_exchange_strong_explicit(&q->pop.tail, &tail, tail + 1, memory_order_seq_cst, memory_order_relaxed))
         out.state = SPMC_QUEUE_FAILED_RACE;
     else
         out.state = SPMC_QUEUE_OK;
@@ -333,16 +339,50 @@ SPMC_QUEUE_API_INLINE bool spmc_queue_pop(SPMC_Queue *q, void* item, isize item_
 SPMC_QUEUE_API_INLINE isize spmc_queue_capacity(const SPMC_Queue *q)
 {
     _SPMC_QUEUE_USE_ATOMICS;
-    SPMC_Queue_Block *a = atomic_load_explicit(&q->block, memory_order_relaxed);
-    return a ? (isize) a->mask + 1 : 0;
+    SPMC_Queue_Block *block = atomic_load_explicit(&q->pop.block, memory_order_relaxed);
+    return block ? (isize) block->mask + 1 : 0;
 }
 
 SPMC_QUEUE_API_INLINE isize spmc_queue_count(const SPMC_Queue *q)
 {
     _SPMC_QUEUE_USE_ATOMICS;
-    uint64_t t = atomic_load_explicit(&q->top, memory_order_relaxed);
-    uint64_t b = atomic_load_explicit(&q->bot, memory_order_relaxed);
-    uint64_t diff = (isize) (b - t);
+    uint64_t head, tail = 0;
+    uint64_t t0 = atomic_load_explicit(&q->pop.tail, memory_order_relaxed);
+    for(;;) {
+        head = atomic_load_explicit(&q->push.head, memory_order_acquire);
+        tail = atomic_load_explicit(&q->pop.tail, memory_order_acquire);
+
+        //checks if anything happened between the head load and tail load.
+        //If tail == t0 (prev value) than clearly nothing happened thus the
+        // calculated head and tail values are "accudate": there was point in time
+        // when head = head and tail = tail
+        if(tail == t0)
+            break;
+
+        t0 = tail;
+    }
+
+    uint64_t diff = (isize) (head - tail);
+    return diff >= 0 ? diff : 0;
+}
+
+SPMC_QUEUE_API_INLINE isize spmc_queue_count_upper(const SPMC_Queue *q)
+{
+    _SPMC_QUEUE_USE_ATOMICS;
+    uint64_t tail = atomic_load_explicit(&q->pop.tail, memory_order_relaxed);
+    atomic_thread_fence(memory_order_acquire);
+    uint64_t head = atomic_load_explicit(&q->push.head, memory_order_relaxed);
+    uint64_t diff = (isize) (head - tail);
+    return diff >= 0 ? diff : 0;
+}
+
+SPMC_QUEUE_API_INLINE isize spmc_queue_count_lower(const SPMC_Queue *q)
+{
+    _SPMC_QUEUE_USE_ATOMICS;
+    uint64_t head = atomic_load_explicit(&q->push.head, memory_order_relaxed);
+    atomic_thread_fence(memory_order_acquire);
+    uint64_t tail = atomic_load_explicit(&q->pop.tail, memory_order_relaxed);
+    uint64_t diff = (isize) (head - tail);
     return diff >= 0 ? diff : 0;
 }
 

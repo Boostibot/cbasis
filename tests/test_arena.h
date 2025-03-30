@@ -2,6 +2,8 @@
 #include "../scratch.h"
 #include "../random.h"
 #include "../time.h"
+#include "../assert.h"
+#include <string.h>
 
 static char* arena_push_string(Scratch* arena, const char* string)
 {
@@ -21,6 +23,7 @@ static void test_arena_unit()
     
     Scratch_Arena arena_stack = {0};
     scratch_arena_init(&arena_stack, "test_arena", 0, 0, 0);
+    
 
     {
         Scratch level1 = scratch_acquire(&arena_stack);
@@ -28,62 +31,57 @@ static void test_arena_unit()
         scratch_release(&level1);
     }
 
+    SCRATCH_SCOPE_FROM(level1, &arena_stack)
     {
-        Scratch level1 = scratch_acquire(&arena_stack);
+        char* pat1 = arena_push_string(&level1, PATTERN1);
+        TEST(memcmp(pat1, PATTERN1, sizeof PATTERN1 - 1) == 0);
+
+        SCRATCH_SCOPE_FROM(level2, &arena_stack)
         {
-            char* pat1 = arena_push_string(&level1, PATTERN1);
+            char* pat2 = arena_push_string(&level2, PATTERN2);
             TEST(memcmp(pat1, PATTERN1, sizeof PATTERN1 - 1) == 0);
 
-            Scratch level2 = scratch_acquire(&arena_stack);
+            //not a fall (due to multiplex)
+            char* pat1_2 = arena_push_string(&level1, PATTERN1);
+            TEST(memcmp(pat1_2, PATTERN1, sizeof PATTERN1 - 1) == 0);
+            TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.fall_count == 0);
+
+            SCRATCH_SCOPE_FROM(level3, &arena_stack)
             {
-                char* pat2 = arena_push_string(&level2, PATTERN2);
-                TEST(memcmp(pat1, PATTERN1, sizeof PATTERN1 - 1) == 0);
-
-                //not a fall (due to multiplex)
-                char* pat1_2 = arena_push_string(&level1, PATTERN1);
-                TEST(memcmp(pat1_2, PATTERN1, sizeof PATTERN1 - 1) == 0);
+                char* pat3 = arena_push_string(&level3, PATTERN3); (void) pat3;
                 TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.fall_count == 0);
-
-                Scratch level3 = scratch_acquire(&arena_stack);
-                {
-                    char* pat3 = arena_push_string(&level3, PATTERN3); (void) pat3;
-                    TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.fall_count == 0);
-                    
-                    //fall!
-                    char* pat1_3 = arena_push_string(&level1, PATTERN1);
-                    TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.fall_count == 1);
                 
-                    Scratch level4 = scratch_acquire(&arena_stack);
+                //fall!
+                char* pat1_3 = arena_push_string(&level1, PATTERN1);
+                TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.fall_count == 1);
+            
+                SCRATCH_SCOPE_FROM(level4, &arena_stack)
+                {
+                    TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.rise_count == 0);
+                    SCRATCH_SCOPE_FROM(level5, &arena_stack)
                     {
-                        TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.rise_count == 0);
-                        Scratch level5 = scratch_acquire(&arena_stack);
-                        {
-                            //Rise!
-                            arena_push_string(&level5, PATTERN3);
-                            TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.rise_count == 1);
-                            TEST(memcmp(pat1,   PATTERN1, sizeof PATTERN1 - 1) == 0);
-                            TEST(memcmp(pat1_2, PATTERN1, sizeof PATTERN1 - 1) == 0);
-                            TEST(memcmp(pat1_3, PATTERN1, sizeof PATTERN1 - 1) == 0);
-                        }
-                        //missing release!
+                        //Rise!
+                        arena_push_string(&level5, PATTERN3);
+                        TEST(SCRATCH_ARENA_CHANNELS != 2 || arena_stack.rise_count == 1);
+                        TEST(memcmp(pat1,   PATTERN1, sizeof PATTERN1 - 1) == 0);
+                        TEST(memcmp(pat1_2, PATTERN1, sizeof PATTERN1 - 1) == 0);
+                        TEST(memcmp(pat1_3, PATTERN1, sizeof PATTERN1 - 1) == 0);
                     }
-                    scratch_release(&level4);
-
-                    char* pat3_2 = arena_push_string(&level3, PATTERN3);
-                    TEST(memcmp(pat3, PATTERN3, sizeof PATTERN3 - 1) == 0);
-                    TEST(memcmp(pat3_2, PATTERN3, sizeof PATTERN3 - 1) == 0);
+                    //missing release!
                 }
-                scratch_release(&level3);
 
-                TEST(memcmp(pat2, PATTERN2, sizeof PATTERN2 - 1) == 0);
-                TEST(memcmp(pat2, PATTERN2, sizeof PATTERN2 - 1) == 0);
+                char* pat3_2 = arena_push_string(&level3, PATTERN3);
+                TEST(memcmp(pat3, PATTERN3, sizeof PATTERN3 - 1) == 0);
+                TEST(memcmp(pat3_2, PATTERN3, sizeof PATTERN3 - 1) == 0);
             }
 
-            TEST(memcmp(pat1, PATTERN1, sizeof PATTERN1 - 1) == 0);
-            TEST(memcmp(pat1, PATTERN1, sizeof PATTERN1 - 1) == 0);
-            //! No free
+            TEST(memcmp(pat2, PATTERN2, sizeof PATTERN2 - 1) == 0);
+            TEST(memcmp(pat2, PATTERN2, sizeof PATTERN2 - 1) == 0);
         }
-        scratch_release(&level1);
+
+        TEST(memcmp(pat1, PATTERN1, sizeof PATTERN1 - 1) == 0);
+        TEST(memcmp(pat1, PATTERN1, sizeof PATTERN1 - 1) == 0);
+        //! No free
     }
 
     //Same thing with the macro

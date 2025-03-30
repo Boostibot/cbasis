@@ -111,12 +111,6 @@ EXTERNAL void generic_array_append(Generic_Array gen, const void* data, isize da
 //All data structers in this library need to be zero init to be valid!
 #define array_init(array_ptr, allocator) \
     generic_array_init(array_make_generic(array_ptr), (allocator))
-    
-//Initializes the array and preallocates it to the desired size
-#define array_init_with_capacity(array_ptr, allocator, capacity) (\
-        array_init((array_ptr), (allocator)), \
-        array_reserve((array_ptr), (capacity)) \
-    )
 
 //Deallocates and resets the array
 #define array_deinit(array_ptr) \
@@ -154,10 +148,6 @@ EXTERNAL void generic_array_append(Generic_Array gen, const void* data, isize da
         array_clear(array_ptr), \
         array_append((array_ptr), (items), (item_count)) \
     )\
-    
-//Copies from from_arr into to_arr_ptr overriding its elements. 
-#define array_copy(to_arr_ptr, from_arr) \
-    array_assign((to_arr_ptr), (from_arr).data, (from_arr).count)
 
 //Appends a single item to the end of the array
 #define array_push(array_ptr, item_value) (           \

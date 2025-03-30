@@ -1,9 +1,7 @@
 #pragma once
 #include "../hash.h"
-
 #include "../array.h"
 #include "../allocator_debug.h"
-#include "../scratch.h"
 #include "../random.h"
 #include "../time.h"
 #include <string.h>
@@ -17,7 +15,7 @@ INTERNAL int u64_comp_func(const void* a_, const void* b_)
 
 INTERNAL void test_hash_stress(f64 max_seconds)
 {
-	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK | DEBUG_ALLOC_USE);
+	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK);
 	{
 		typedef enum {
 			INIT,
@@ -161,8 +159,8 @@ INTERNAL void test_hash_stress(f64 max_seconds)
 				case COPY: {
 					//copy
 					hash_copy_rehash(&other_table, &table, 0);
-					array_copy(&other_truth_val_array, truth_val_array);
-					array_copy(&other_truth_key_array, truth_key_array);
+					array_assign(&other_truth_val_array, truth_val_array.data, truth_val_array.count);
+					array_assign(&other_truth_key_array, truth_key_array.data, truth_key_array.count);
 					
 					//swap all acessors
 					random_swap_any(&truth_val_array, &other_truth_val_array, sizeof truth_val_array);
@@ -188,19 +186,14 @@ INTERNAL void test_hash_stress(f64 max_seconds)
 				for(isize k = 0; k < truth_key_array.count; k++)
 				{
 					u64 key = truth_key_array.data[k];
-					SCRATCH_SCOPE(arena)
 					{
-						u64_Array truth_found = {0};
-						u64_Array hash_found = {0};
-						array_init_with_capacity(&truth_found, arena.alloc, 8);
-						array_init_with_capacity(&hash_found, arena.alloc, 8);
+						u64_Array truth_found = {debug_alloc.alloc};
+						u64_Array hash_found = {debug_alloc.alloc};
 							
 						for(isize j = 0; j < truth_key_array.count; j++)
 							if(truth_key_array.data[j] == key)
 								array_push(&truth_found, truth_val_array.data[j]);
 								
-						for(Hash_Iter it = {0}; hash_iterate(&table, key, &it); );
-
 						for(Hash_Iter it = {0}; hash_iterate(&table, key, &it); )
 							array_push(&hash_found, it.entry->value);
 								
@@ -213,6 +206,9 @@ INTERNAL void test_hash_stress(f64 max_seconds)
 
 						for(isize l = 0; l < hash_found.count; l++)
 							TEST(hash_found.data[l] == truth_found.data[l]);
+
+						array_deinit(&truth_found);
+						array_deinit(&hash_found);
 					}
 				}
 			}

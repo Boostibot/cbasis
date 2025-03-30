@@ -1,3 +1,5 @@
+#include "../assert.h"
+#include "../string.h"
 
 static void test_string_find_single(const char* in_string_c, const char* search_for_c)
 {

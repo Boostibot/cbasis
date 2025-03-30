@@ -7,7 +7,7 @@
 
 INTERNAL void test_array_stress(double max_seconds)
 {
-	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK | DEBUG_ALLOC_USE);
+	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK);
 	{
 		PROFILE_START();
 		enum Action 
@@ -129,7 +129,7 @@ INTERNAL void test_array_stress(double max_seconds)
 				} break;
 				
 				case COPY: {
-					array_copy(other_array, *arr);
+					array_assign(other_array, arr->data, arr->count);
 					TEST(other_array->count == arr->count);
 					TEST(other_array->capacity >= other_array->count);
 

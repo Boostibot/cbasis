@@ -1,4 +1,5 @@
 
+#include "../string.h"
 #include "../serialize.h"
 #include "../math.h"
 #include "../allocator_debug.h"

@@ -54,6 +54,7 @@ EXTERNAL bool unicode_is_other_letter(uint32_t codepoint);
 EXTERNAL int32_t unicode_range_search(uint32_t codepoint, const Unicode_Range* ranges, int32_t count);
 
 //Making the generated section of this file
+#include <stdio.h>
 EXTERNAL bool unicode_format_ranges_file(const char* in, const char* out);
 EXTERNAL void unicode_parse_table(const char* data, size_t size, const char* category_name, Unicode_Range** parsed, size_t* parsed_count, size_t* parsed_capacity);
 EXTERNAL void unicode_format_append_ranges(FILE* file, char* file_data, size_t file_size, const char* name, const char* categories);

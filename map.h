@@ -382,14 +382,16 @@ EXTERNAL void _map_rehash(Map* map, isize requested_capacity, uint32_t entry_siz
     TEST(requested_capacity <= UINT32_MAX);
     
     //Unless there are many many gravestones, count them into the lest size.
-    //This prevents a porblem where if the map has 11 entries and one removed entry, we will rehash
-    // to the same capacity (16). If we then insert an item, remove an item we are back where we were.
+    //This prevents a problem where if the map has 11 entries and one removed entry, we will rehash
+    // to the same capacity (16). If we then insert an item, remove an item, we are back where we were.
     //Essentially for some unlucky sizes (one before the rehash will triger) there would be a rehash on
     // every second operation - this is of course very bad for perf
     isize least_size = map->gavestones > map->count ? map->count : map->gavestones + map->count;
     if(least_size < requested_capacity)
         least_size = requested_capacity;
-
+    if(least_size > INT64_MAX/2)
+        least_size = INT64_MAX/2;
+        
     isize new_cap = 16;
     while(new_cap*3/4 <= least_size)
         new_cap *= 2;

@@ -6,8 +6,6 @@
 #include "../map.h"
 
 #include "../hash_string.h"
-#include "../defines.h"
-#include "../assert.h"
 #include "../random.h"
 #include "../allocator_debug.h"
 #include "../array.h"

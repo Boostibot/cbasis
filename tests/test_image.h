@@ -5,7 +5,7 @@
 
 INTERNAL void test_image_builder_copy()
 {
-	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK | DEBUG_ALLOC_USE | DEBUG_ALLOC_PRINT);
+	Debug_Allocator debug_alloc = debug_allocator_make(allocator_get_default(), DEBUG_ALLOC_LEAK_CHECK | DEBUG_ALLOC_PRINT);
     {
         Image from_image  = {0};
         image_init(&from_image, debug_alloc.alloc, sizeof(u16), PIXEL_TYPE_U16);

@@ -55,7 +55,7 @@ EXTERNAL bool utf8_decode(const void* input, isize input_size, uint32_t* out_cod
 {
     uint8_t* in = (uint8_t*) input + *index;
     isize rem = input_size - *index;
-    if(rem < 1) {
+    if(rem < 1 || rem > input_size) {
         *out_code_point = 0;
         return false;
     }
@@ -121,8 +121,9 @@ EXTERNAL bool utf8_decode(const void* input, isize input_size, uint32_t* out_cod
 EXTERNAL bool utf8_encode(void* output, isize output_size, uint32_t code_point, isize* index) {
     uint8_t* out = (uint8_t*) output + *index;
     isize rem = output_size - *index;
-
-    //if ((0xD800 <= code_point && code_point <= 0xDFFF) || code_point > 0x10FFFF || rem < 4)  
+    if(rem > output_size)
+        return false;
+        
     if (code_point <= 0x7F) {
         if(rem < 1) return false;
         out[0] = (uint8_t) code_point;
@@ -165,7 +166,7 @@ EXTERNAL bool utf16_decode(const void* input, isize input_size, uint32_t* out_co
 {
     uint8_t* in = (uint8_t*) input + *index;
     isize rem = input_size - *index;
-    if(rem < 2) {
+    if(rem < 2 || rem > input_size) {
         *out_code_point = rem == 0 ? 0 : (uint32_t) -1;
         return false;
     }
@@ -198,7 +199,7 @@ EXTERNAL bool utf16_encode(void* output, isize output_size, uint32_t code_point,
 {
     uint8_t* out = (uint8_t*) output + *index;
     isize rem = output_size - *index;
-    if(rem < 2)
+    if(rem < 2 || rem > output_size)
         return false;
         
     if(code_point < 0x10000)
@@ -249,7 +250,7 @@ EXTERNAL bool utf32_decode(const void* input, isize input_size, uint32_t* out_co
 {
     uint8_t* in = (uint8_t*) input + *index;
     isize rem = input_size - *index;
-    if(rem < 4) {
+    if(rem < 4 || rem > input_size) {
         *out_code_point = rem == 0 ? 0 : (uint32_t) -1;
         return false;
     }
@@ -268,7 +269,7 @@ EXTERNAL bool utf32_decode(const void* input, isize input_size, uint32_t* out_co
         code_point |= (uint32_t) in[3] << 24;
     }
 
-    if ((0xD800 <= code_point && code_point <= 0xDFFF) || code_point > 0x10FFFF || rem < 4)  {
+    if ((0xD800 <= code_point && code_point <= 0xDFFF) || code_point > 0x10FFFF)  {
         *out_code_point = (uint32_t) -1;
         return false;
     }
@@ -282,7 +283,7 @@ EXTERNAL bool utf32_encode(void* output, isize output_size, uint32_t code_point,
 {
     uint8_t* out = (uint8_t*) output + *index;
     isize rem = output_size - *index;
-    if ((0xD800 <= code_point && code_point <= 0xDFFF) || code_point > 0x10FFFF || rem < 4)  
+    if ((0xD800 <= code_point && code_point <= 0xDFFF) || code_point > 0x10FFFF || rem < 4  || rem > output_size)  
         return false;
     
     if(endian) {

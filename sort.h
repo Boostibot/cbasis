@@ -78,14 +78,6 @@ SORT_API isize lower_bound_no_fail(const void* search_for, const void* sorted_it
 
     //================= Convenience macros ==================
     #define AT(I)        ((char*) items + (I)*item_size)
-    #define SWAP_STAT(a, b) do { \
-        void* x = (void*) (a); \
-        void* y = (void*) (b); \
-        char s[sizeof *(a)]; (void) s; \
-        memcpy(s, x, sizeof *(a)); \
-        memcpy(x, y, sizeof *(a)); \
-        memcpy(y, s, sizeof *(a)); \
-    } while(0) \
 
     #define SWAP_DYN(a, b, temp) do { \
         void* x = (void*) (a); \
@@ -399,7 +391,7 @@ SORT_API isize lower_bound_no_fail(const void* search_for, const void* sorted_it
         }
         
         isize lower_bound_i = ((char*) items - (char*) sorted_items)/item_size;
-        ASSERT(0 <= lower_bound_i && lower_bound_i <= item_count);
+        ASSERT(0 <= lower_bound_i && lower_bound_i < item_count);
         return lower_bound_i;
     }
 
@@ -420,15 +412,12 @@ SORT_API isize lower_bound_no_fail(const void* search_for, const void* sorted_it
         #define AT_OF(items, I) ((char*) (items) + (I)*item_size)
         isize ai = 0;
         isize bi = 0;
-        while(ai < a_len && bi < b_len)
-        {
-            if(is_less(AT_OF(a, ai), AT_OF(b, bi), context))
-            {
+        while(ai < a_len && bi < b_len) {
+            if(is_less(AT_OF(a, ai), AT_OF(b, bi), context)) {
                 memcpy(AT_OF(output, ai + bi), AT_OF(a, ai), item_size);
                 ai++;
             }
-            else
-            {
+            else {
                 memcpy(AT_OF(output, ai + bi), AT_OF(b, bi), item_size);
                 bi++;
             }
@@ -451,15 +440,16 @@ SORT_API isize lower_bound_no_fail(const void* search_for, const void* sorted_it
         for (isize i = 0; i < N; i += INSERTION_SORT_TO)
             insertion_sort(AT_OF(a, i), temp, SORT_MIN(INSERTION_SORT_TO, N - i), item_size, is_less, context);
 
-        for (isize width = INSERTION_SORT_TO; width < N; width = 2 * width)
-        {
+        for (isize width = INSERTION_SORT_TO; width < N; width = 2 * width) {
             for (isize i = 0; i < N; i += 2*width)
                 merge_sorted(AT_OF(b, i), 
                     AT_OF(a, i), SORT_MIN(width, N - i), 
                     AT_OF(a, i + width), SORT_MIN(width, N - i - width),
                     item_size, is_less, context);
           
-            SWAP_STAT(&a, &b);
+            void* temp = a;
+            a = b;
+            b = temp;
         }
     
         if(dont_copy_back == false && a != input)
@@ -474,7 +464,6 @@ SORT_API isize lower_bound_no_fail(const void* search_for, const void* sorted_it
     }
 
 #undef AT
-#undef SWAP_STAT
 #undef SWAP_DYN
 
 #endif
