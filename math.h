@@ -495,6 +495,7 @@ MATHAPI Vec3 mat4_mul_vec3(Mat4 mat, Vec3 vec)
 //multiplies it with matrix and then returns back the homogenous cordinates normalized result
 //as Vec3
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 MATHAPI Vec4 mat4_apply(Mat4 mat, Vec3 vec)
 =======
 MATHAPI Vec3 mat4_apply_normalize(Mat4 mat, Vec3 vec)
@@ -504,6 +505,7 @@ MATHAPI Vec3 mat4_apply_normalize(Mat4 mat, Vec3 vec)
     return mat4_mul_vec4(mat, homo);
 }
 
+MATHAPI Vec3 mat4_apply(Mat4 mat, Vec3 vec)
 MATHAPI Vec3 mat4_apply(Mat4 mat, Vec3 vec)
 {
     Vec3 scaled = mat4_mul_vec3(mat, vec);
