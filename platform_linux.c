@@ -287,7 +287,7 @@ void* _platform_pthread_start_routine(void* arg)
 }
 
 #include <stdarg.h>
-Platform_Error  platform_thread_launch(isize stack_size_or_zero, void (*func)(void*), void* context, const char* name_fmt, ...)
+Platform_Error platform_thread_launch(isize stack_size_or_zero, void (*func)(void*), void* context, const char* name_fmt, ...)
 {
     Platform_Error error = 0;
     Platform_Pthread_State* thread_state = (Platform_Pthread_State*) calloc(1, sizeof(Platform_Pthread_State));
@@ -609,89 +609,101 @@ static void _platform_perf_counters_init()
 // Filesystem
 //=========================================
 
-//@TODO: Make a general ephemeral acquire
 #define PLATFORM_PRINT_OUT_OF_MEMORY(ammount) \
     fprintf(stderr, "platform allocation failed while calling function %s! not enough memory! requested: %lli", (__FUNCTION__), (long long) (ammount))
 
-const char* _ephemeral_null_terminate(Platform_String string)
+typedef struct Plt_Dyn_String {
+    char* data;
+    isize count;
+    isize capacity;
+    bool is_allocated;
+} Plt_Dyn_String;
+
+#define _LOCAL_BUFFER_SIZE (PATH_MAX + 32)
+
+static void plt_dyn_string_reserve(Plt_Dyn_String* buffer, int64_t new_cap)
 {
-    if(string.data == NULL || string.count <= 0)
-        return "";
+    assert((buffer->capacity == 0) == (buffer->data == NULL));
+    assert(0 <= buffer->count);
+    assert(buffer->count <= buffer->capacity);
+    if(buffer->capacity > 0) 
+        assert(buffer->data[buffer->count] == '\0');
 
-    //We use a trick to not pointlessly copy and null terminate strings that are null terminated.
-    //For this of course we need to check if they contain null one-past-the-end-of-the-buffer.
-    //This is illegal by the standard but we can exploit the fact that errors (or any other type
-    //of side effect from reading memory location) can only occur on individual pages.
-    //
-    //This means if the null termination is on the same page as any part of the string we are free
-    //to check it. This makes it so we only have probability of 1/PAGE_SIZE that we will needlessly
-    //copy and null terminate string that was already null terminated
-
-    enum {
-        PAGE_BOUNDARY = 1024,         //Assume very small for safety
-        DO_CONDTIONAL_NULL_TERMINATION = true, //set to true for maximum compatibility 
-        MAX_COPIED_SIMULATENOUS = 4, //The number of copied strings that are able to coexist in the system. 
-        MAX_COPIED_SIZE = 1024,
-        MIN_COPIED_SIZE = 64,
-    };
-
-    if(DO_CONDTIONAL_NULL_TERMINATION)
+    if(new_cap > buffer->capacity)
     {
-        const char* potential_null_termination = string.data + string.count;
-        bool is_null_termianted = false;
+        void* new_data = NULL;
+        int64_t new_capaity = buffer->capacity*3/2 + 8;
+        if(new_capaity < new_cap)
+            new_capaity = new_cap;
 
-        //if the potential_null_termination is on the same page as the rest of the string...
-        if((int64_t) potential_null_termination % PAGE_BOUNDARY != 0)
-        {
-            //Do illegal read past the end of the buffer to check if it is null terminated
-            is_null_termianted = *potential_null_termination == '\0';
+        if(buffer->is_allocated)
+            new_data = realloc(buffer->data, new_capaity + 1);
+        else {
+            new_data = malloc(new_capaity + 1);
+            memcpy(new_data, buffer->data, buffer->capacity);
         }
 
-        if(is_null_termianted)
-            return string.data;
+        memset((char*) new_data + buffer->capacity, 0, (new_capaity + 1 - buffer->capacity));
+        buffer->capacity = new_capaity;
+        buffer->data = new_data;
+        buffer->is_allocated = true;
     }
-
-    static __thread char* strings[MAX_COPIED_SIMULATENOUS] = {0};
-    static __thread int64_t string_sizes[MAX_COPIED_SIMULATENOUS] = {0};
-    static __thread int64_t string_slot = 0;
-
-    const char* out_string = "";
-    char** curr_data = &strings[string_slot];
-    int64_t* curr_size = &string_sizes[string_slot];
-    string_slot = (string_slot + 1) % MAX_COPIED_SIMULATENOUS;
-
-    bool had_error = false;
-    //If we need a bigger buffer OR the previous allocation was too big and the new one isnt
-    if(*curr_size <= string.count || (*curr_size > MAX_COPIED_SIZE && string.count <= MAX_COPIED_SIZE))
-    {
-        int64_t alloc_size = string.count + 1;
-        if(alloc_size < MIN_COPIED_SIZE)
-            alloc_size = MIN_COPIED_SIZE;
-
-        void* new_data = realloc(*curr_data, (size_t) alloc_size);
-        if(new_data == NULL)
-        {
-            PLATFORM_PRINT_OUT_OF_MEMORY(alloc_size);
-            had_error = true;
-            *curr_size = 0;
-            *curr_data = NULL;
-        }
-        else
-        {
-            *curr_size = alloc_size;
-            *curr_data = (char*) new_data;
-        }
-    }
-
-    if(had_error == false)
-    {
-        memmove(*curr_data, string.data, (size_t) string.count);
-        (*curr_data)[string.count] = '\0';
-        out_string = *curr_data;
-    }
-
-    return out_string;
 }
+
+static void plt_dyn_string_deinit(Plt_Dyn_String* buffer) {
+    if(buffer->is_allocated) 
+        free(buffer->data);
+    memset(buffer, 0, sizeof *buffer);
+}
+
+static void plt_dyn_string_init_backed(Plt_Dyn_String* buffer, char* backing, isize backing_size) {
+    plt_dyn_string_deinit(buffer);
+    if(backing_size > 1) {
+        memset(backing, 0, backing_size);
+        buffer->data = backing;
+        buffer->capacity = backing_size - 1;
+        buffer->is_allocated = false;
+    }
+}
+
+static void plt_dyn_string_append(Plt_Dyn_String* buffer, const char* data, isize count)
+{
+    if(count <= 0)
+        return;
+
+    plt_dyn_string_reserve(buffer, buffer->count + count);
+    memcpy(buffer->data + buffer->count, data, (size_t) count);
+    buffer->count += count;
+    buffer->data[buffer->count] = '\0';
+}
+
+static void plt_dyn_string_resize(Plt_Dyn_String* buffer, isize new_size)
+{
+    assert(new_size >= 0);
+    if(new_size < 0)
+        new_size = 0;
+
+    plt_dyn_string_reserve(buffer, new_size);
+    if(new_size < buffer->count)
+        memset(buffer->data + new_size, 0, (size_t) (buffer->count - new_size));
+    buffer->count = new_size;
+}
+
+static void plt_dyn_string_appendc(Plt_Dyn_String* buffer, const char* data)
+{
+    plt_dyn_string_append(buffer, data, data ? strlen(data) : 0);
+}
+
+#define _CONCAT(a, b) a ## b
+#define CONCAT(a, b) _CONCAT(a, b)
+#define plt_dyn_string_backed(string_ptr, backing_size) \
+    char CONCAT(__backing, __LINE__)[(backing_size)]; \
+    plt_dyn_string_init_backed((string_ptr), CONCAT(__backing, __LINE__), (backing_size)); \
+
+#define plt_dyn_string_backed_null_terminate(string_ptr, backing_size, string) \
+    plt_dyn_string_backed(string_ptr, backing_size); \
+    plt_dyn_string_append((string_ptr), (string).data, (string).count); \
+
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -700,8 +712,10 @@ const char* _ephemeral_null_terminate(Platform_String string)
 
 Platform_Error platform_file_info(Platform_String file_path, Platform_File_Info* info_or_null)
 {
+    Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, file_path);
+
     struct stat buf = {0};
-    bool state = fstatat(AT_FDCWD, _ephemeral_null_terminate(file_path), &buf, AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH) == 0;
+    bool state = fstatat(AT_FDCWD, buffer.data, &buf, AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH) == 0;
     if(state && info_or_null != NULL)
     {
         memset(info_or_null, 0, sizeof *info_or_null);
@@ -729,6 +743,8 @@ Platform_Error platform_file_info(Platform_String file_path, Platform_File_Info*
             info_or_null->link_type = PLATFORM_LINK_TYPE_NOT_LINK;
     }
 
+    plt_dyn_string_deinit(&buffer);
+
     return _platform_error_code(state);
 }
 
@@ -742,7 +758,7 @@ int _platform_fd(const Platform_File* file)
     return (int) (uintptr_t) file->handle - 1;
 }
 
-Platform_Error platform_file_open(Platform_File* file, Platform_String path, int open_flags)
+Platform_Error platform_file_open(Platform_File* file, Platform_String file_path, int open_flags)
 {
     platform_file_close(file);
 
@@ -771,7 +787,10 @@ Platform_Error platform_file_open(Platform_File* file, Platform_String path, int
     if(open_flags & PLATFORM_FILE_OPEN_HINT_WRITETHROUGH) 
         mode |= O_SYNC;
 
-    int fd = open(_ephemeral_null_terminate(path), mode, OPEN_FILE_PERMS);
+    Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, file_path);
+    int fd = open(buffer.data, mode, OPEN_FILE_PERMS);
+    plt_dyn_string_deinit(&buffer);
+
     file->handle = (void*) (ptrdiff_t) (fd + 1);
 
     if(file->handle) {
@@ -828,7 +847,6 @@ Platform_Error platform_file_write(Platform_File* file, const void* buffer, int6
     return _platform_error_code(file->handle && total_written == size);
 }
 
-
 Platform_Error platform_file_read_entire(Platform_String file_path, void* buffer, isize buffer_size)
 {
     Platform_File file = {0};
@@ -857,7 +875,10 @@ Platform_Error platform_file_append_entire(Platform_String file_path, const void
     if(fail_if_not_found == false)
         mode |= O_CREAT;
 
-    int fd = open(_ephemeral_null_terminate(file_path), mode, OPEN_FILE_PERMS);
+    Plt_Dyn_String path_buffer = {0}; plt_dyn_string_backed_null_terminate(&path_buffer, _LOCAL_BUFFER_SIZE, file_path);
+    int fd = open(path_buffer.data, mode, OPEN_FILE_PERMS);
+    plt_dyn_string_deinit(&path_buffer);
+
     int64_t total_written = 0;
     for(; fd != -1 && total_written < buffer_size;) {
         ssize_t bytes_written = write(fd, (unsigned char*) buffer + total_written, (size_t) (buffer_size - total_written));
@@ -898,17 +919,23 @@ Platform_Error platform_file_create(Platform_String file_path, bool fail_if_exis
     if(fail_if_exists)
         flags |= O_EXCL;
         
-    int fd = open(_ephemeral_null_terminate(file_path), flags, OPEN_FILE_PERMS);
-    Platform_Error out = _platform_error_code(fd != -1);
+    Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, file_path);
+    int fd = open(buffer.data, flags, OPEN_FILE_PERMS);
+    plt_dyn_string_deinit(&buffer);
 
-    if(fd != -1) close(fd);
+    Platform_Error out = _platform_error_code(fd != -1);
+    if(fd != -1) 
+        close(fd);
 
     return out;
 }
 
 Platform_Error platform_file_remove(Platform_String file_path, bool fail_if_not_found)
 {
-    bool state = unlink(_ephemeral_null_terminate(file_path)) == 0;
+    Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, file_path);
+    bool state = unlink(buffer.data) == 0;
+    plt_dyn_string_deinit(&buffer);
+
     //if the failiure was because the file doesnt exist its sucess
     //Only it must not have been deleted by this call...
     if(state == false && errno == ENOENT && fail_if_not_found == false)
@@ -922,27 +949,28 @@ Platform_Error platform_file_remove(Platform_String file_path, bool fail_if_not_
 
 Platform_Error platform_file_move(Platform_String new_path, Platform_String old_path, bool replace_exiting)
 {
-    const char* _new = _ephemeral_null_terminate(new_path);
-    const char* _old = _ephemeral_null_terminate(old_path);
+    Plt_Dyn_String buffer_new = {0}; plt_dyn_string_backed_null_terminate(&buffer_new, _LOCAL_BUFFER_SIZE, new_path);
+    Plt_Dyn_String buffer_old = {0}; plt_dyn_string_backed_null_terminate(&buffer_old, _LOCAL_BUFFER_SIZE, old_path);
     
-    bool state = syscall(SYS_renameat2, AT_FDCWD, _old, AT_FDCWD, _new, replace_exiting ? 0 : RENAME_NOREPLACE) == 0;
-    // bool state = renameat2(AT_FDCWD, _old, AT_FDCWD, _new, RENAME_NOREPLACE) == 0;
+    bool state = syscall(SYS_renameat2, AT_FDCWD, buffer_old.data, AT_FDCWD, buffer_new.data, replace_exiting ? 0 : RENAME_NOREPLACE) == 0;
+    plt_dyn_string_deinit(&buffer_new);
+    plt_dyn_string_deinit(&buffer_old);
+
     return _platform_error_code(state);
 }
 
 //Copies a file. If the file cannot be found or copy_to_path file that already exists, fails.
 Platform_Error platform_file_copy(Platform_String copy_to_path, Platform_String copy_from_path, bool replace_exiting)
 {
-    const char* to = _ephemeral_null_terminate(copy_to_path);
-    const char* from = _ephemeral_null_terminate(copy_from_path);
-    size_t _GB = 1 << (30);
+    Plt_Dyn_String buffer_to = {0}; plt_dyn_string_backed_null_terminate(&buffer_to, _LOCAL_BUFFER_SIZE, copy_to_path);
+    Plt_Dyn_String buffer_from = {0}; plt_dyn_string_backed_null_terminate(&buffer_from, _LOCAL_BUFFER_SIZE, copy_from_path);
 
     int to_fd = -1;
     int from_fd = -1;
     bool state = true;
     if(state)
     {
-        from_fd = open(from, O_RDONLY | O_LARGEFILE, OPEN_FILE_PERMS);
+        from_fd = open(buffer_from.data, O_RDONLY | O_LARGEFILE, OPEN_FILE_PERMS);
         state = from_fd != -1;
     }
 
@@ -952,18 +980,30 @@ Platform_Error platform_file_copy(Platform_String copy_to_path, Platform_String 
         if(replace_exiting == false)
             flags |= O_EXCL;
 
-        to_fd = open(to, flags, OPEN_FILE_PERMS);
+        to_fd = open(buffer_to.data, flags, OPEN_FILE_PERMS);
         state = to_fd != -1;
     }
 
-    while(state)
+    plt_dyn_string_deinit(&buffer_to);
+    plt_dyn_string_deinit(&buffer_from);
+
+    size_t size = 0;
+    if(state) {
+        struct stat64 stat;
+        state = fstat64(from_fd, &stat) != -1;
+        size = (size_t) stat.st_size;
+    }
+
+    while(state && size > 0)
     {
-        ssize_t bytes_copied = copy_file_range(from_fd, NULL, to_fd, NULL, _GB, 0);
+        ssize_t bytes_copied = copy_file_range(from_fd, NULL, to_fd, NULL, size, 0);
         if(bytes_copied == -1)
             state = false;
         //If no more to read stop
         if(bytes_copied == 0)
             break;
+
+        size -= bytes_copied;
     }
 
     Platform_Error out = _platform_error_code(state); 
@@ -976,11 +1016,11 @@ Platform_Error platform_file_copy(Platform_String copy_to_path, Platform_String 
 Platform_Error platform_file_resize(Platform_String file_path, int64_t size)
 {
     //@NOTE: For some reason truncate64 does not see files that normal open does. 
-    //       I am very confused by this. I think it has something to do with relative files.
-    // bool state = truncate64(_ephemeral_null_terminate(file_path), size);
-    // return _platform_error_code(state);
+    //       I am very confused by this. I think it has something to do with relative file paths.
+    Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, file_path);
+    int fd = open(buffer.data, O_WRONLY | O_LARGEFILE, OPEN_FILE_PERMS);
+    plt_dyn_string_deinit(&buffer);
 
-    int fd = open(_ephemeral_null_terminate(file_path), O_WRONLY | O_LARGEFILE, OPEN_FILE_PERMS);
     bool state = fd != -1;
     if(state)
         state = ftruncate64(fd, size) == 0;
@@ -992,7 +1032,10 @@ Platform_Error platform_file_resize(Platform_String file_path, int64_t size)
 
 Platform_Error platform_directory_create(Platform_String dir_path, bool fail_if_exists)
 {
-    bool state = mkdir(_ephemeral_null_terminate(dir_path), OPEN_FILE_PERMS) == 0;
+    Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, dir_path);
+    bool state = mkdir(buffer.data, OPEN_FILE_PERMS) == 0;
+    plt_dyn_string_deinit(&buffer);
+
     //If failed because dir exists and we dont care about it then it didnt fail
     if(state == false && errno == EEXIST && fail_if_exists == false)
         state = true;
@@ -1002,7 +1045,10 @@ Platform_Error platform_directory_create(Platform_String dir_path, bool fail_if_
 
 Platform_Error platform_directory_remove(Platform_String dir_path, bool fail_if_not_found)
 {
-    bool state = rmdir(_ephemeral_null_terminate(dir_path)) == 0;
+    Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, dir_path);
+    bool state = rmdir(buffer.data) == 0;
+    plt_dyn_string_deinit(&buffer);
+
     //If failed because dir does not exists and we dont care about it then it didnt fail
     if(state == false && errno == ENOENT && fail_if_not_found == false)
         state = true;
@@ -1012,7 +1058,10 @@ Platform_Error platform_directory_remove(Platform_String dir_path, bool fail_if_
 
 Platform_Error platform_directory_set_current_working(Platform_String new_working_dir)
 {
-    bool state = chdir(_ephemeral_null_terminate(new_working_dir)) == 0;
+    Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, new_working_dir);
+    bool state = chdir(buffer.data) == 0;
+    plt_dyn_string_deinit(&buffer);
+
     return _platform_error_code(state);
 }
 
@@ -1049,7 +1098,7 @@ const char* platform_directory_get_startup_working()
 
 const char* platform_get_executable_path()
 {
-    const int64_t path_size = PATH_MAX*4;
+    const int64_t path_size = PATH_MAX;
     static char* exe_path = NULL;
 
     if(exe_path == NULL)
@@ -1092,7 +1141,10 @@ Platform_Error platform_directory_iter_init(Platform_Directory_Iter* iter, Platf
     iter->internal = calloc(1, sizeof(Dir_Iter));
     if(iter->internal) {
         Dir_Iter* it = (Dir_Iter*) iter->internal; 
-        it->dir = opendir(_ephemeral_null_terminate(directory_path));
+        Plt_Dyn_String buffer = {0}; plt_dyn_string_backed_null_terminate(&buffer, _LOCAL_BUFFER_SIZE, directory_path);
+        it->dir = opendir(buffer.data);
+        plt_dyn_string_deinit(&buffer);
+
         if(it->dir) {
             iter->index = -1;
             state = true;

@@ -89,6 +89,7 @@
         "futex.h": "c",
         "span": "c",
         "inotify.h": "c",
-        "stddef.h": "c"
+        "stddef.h": "c",
+        "cmath": "cpp"
     }
 }

@@ -542,57 +542,44 @@ int64_t platform_epoch_time_startup()
 }
 
 
-
 //=========================================
 // Files
 //=========================================
-typedef struct Platform_WString {
-    const wchar_t* data;
-    int64_t size;
-} Platform_WString;
-
-#define DEFINE_BUFFER_TYPE(T, Name) \
-    typedef struct Name { \
+//Null terminated buffer (String builder) 
+#define PLt_Buffer(T) \
+    struct { \
         int32_t is_alloced; \
-        int64_t size; \
+        int32_t _; \
+        int64_t count; \
         int64_t capacity; \
         T* data; \
-    } Name; \
+    }; \
 
-DEFINE_BUFFER_TYPE(void,               Buffer_Base)
-DEFINE_BUFFER_TYPE(char,               String_Buffer)
-DEFINE_BUFFER_TYPE(wchar_t,            WString_Buffer)
+typedef PLt_Buffer(uint8_t) Plt_Buffer_Base;
+typedef PLt_Buffer(char)    Plt_String_Buffer;
+typedef PLt_Buffer(wchar_t) Plt_WString_Buffer;
 
 #define _LOCAL_BUFFER_SIZE (MAX_PATH + 32)
-#define _NORMALIZE_LINUX 0
-#define _NORMALIZE_DIRECTORY 0
-#define _NORMALIZE_FILE 0
 
 #define _CONCAT(a, b) a ## b
 #define CONCAT(a, b) _CONCAT(a, b)
+#define plt_buffer_init_backed(buff, backing_size) \
+    char CONCAT(__backing, __LINE__)[(backing_size)* sizeof *(buff)->data]; \
+    _plt_buffer_init_backed((Plt_Buffer_Base*) (void*) (buff), sizeof *(buff)->data, CONCAT(__backing, __LINE__), (backing_size)); \
 
-#define buffer_init_backed(buff, backing_size) do { \
-        char CONCAT(__backing, __LINE__)[(backing_size)* sizeof *(buff)->data]; \
-        _buffer_init_backed((Buffer_Base*) (void*) (buff), sizeof *(buff)->data, CONCAT(__backing, __LINE__), (backing_size)); \
-    } while(0)
-
-#define buffer_resize(buff, new_size) \
-    _buffer_resize((Buffer_Base*) (void*) (buff), sizeof *(buff)->data, (new_size))
+#define plt_buffer_resize(buff, new_size) \
+    _plt_buffer_resize((Plt_Buffer_Base*) (void*) (buff), sizeof *(buff)->data, (new_size))
     
-#define buffer_reserve(buff, new_size) \
-    _buffer_reserve((Buffer_Base*) (void*) (buff), sizeof *(buff)->data, (new_size))
+#define plt_buffer_reserve(buff, new_size) \
+    _plt_buffer_reserve((Plt_Buffer_Base*) (void*) (buff), sizeof *(buff)->data, (new_size))
 
-#define buffer_append(buff, items, items_count) \
-    _buffer_append((Buffer_Base*) (void*) (buff), sizeof *(buff)->data, (items), (items_count), sizeof *(items))
+#define plt_buffer_append(buff, items, items_count) \
+    _plt_buffer_append((Plt_Buffer_Base*) (void*) (buff), sizeof *(buff)->data, (items), (items_count), sizeof *(items))
 
-#define buffer_deinit(buff) \
-    _buffer_deinit((Buffer_Base*) (void*) (buff))
+#define plt_buffer_deinit(buff) \
+    _plt_buffer_deinit((Plt_Buffer_Base*) (void*) (buff))
 
-#define buffer_push(buff, item) \
-    (buffer_reserve((buff), (buff)->size + 1), \
-    (buff)->data[(buff)->size++] = (item))
-
-static void _buffer_deinit(Buffer_Base* buffer)
+static void _plt_buffer_deinit(Plt_Buffer_Base* buffer)
 {
     if(buffer->is_alloced)
         (void) free(buffer->data);
@@ -600,90 +587,100 @@ static void _buffer_deinit(Buffer_Base* buffer)
     memset(buffer, 0, sizeof *buffer);
 }
 
-static void _buffer_init_backed(Buffer_Base* buffer, int64_t item_size, void* backing, int64_t backing_size)
+static void _plt_buffer_init_backed(Plt_Buffer_Base* buffer, int64_t item_size, void* backing, int64_t backing_size)
 {
-    _buffer_deinit(buffer);
-    buffer->data = backing;
-    buffer->is_alloced = false;
-    buffer->capacity = backing_size;
-    memset(backing, 0, backing_size*item_size);
-}
-
-static void _buffer_reserve(Buffer_Base* buffer, int64_t item_size, int64_t new_cap)
-{
-    assert(item_size > 0);
-    if(buffer->capacity > 0)
-        assert(buffer->size < buffer->capacity);
-
-    if(new_cap >= buffer->capacity)
-    {
-        void* new_data = NULL;
-        int64_t new_capaity = 8;
-        while(new_capaity <= new_cap)
-            new_capaity *= 2;
-
-        //If was allocated before just realloc. If is backed allocate and copy data over
-        if(buffer->is_alloced)
-            new_data = realloc(buffer->data, new_capaity * item_size);
-        else
-        {
-            new_data = malloc(new_capaity * item_size);
-            memcpy(new_data, buffer->data, buffer->capacity*item_size);
-        }
-
-        //null newly added portion
-        memset((char*) new_data + buffer->capacity*item_size, 0, (new_capaity - buffer->capacity)*item_size);
-        buffer->capacity = new_capaity;
-        buffer->data = new_data;
-        buffer->is_alloced = true;
+    _plt_buffer_deinit(buffer);
+    if(backing_size > 1) {
+        buffer->data = backing;
+        buffer->is_alloced = false;
+        buffer->capacity = backing_size - 1;
+        memset(backing, 0, backing_size*item_size);
     }
 }
 
-static void _buffer_resize(Buffer_Base* buffer, int64_t item_size, int64_t new_size)
+static void _plt_buffer_reserve(Plt_Buffer_Base* buffer, int64_t item_size, int64_t new_cap)
 {
-    _buffer_reserve(buffer, item_size, new_size);
+    assert((buffer->capacity == 0) == (buffer->data == NULL));
+    assert(0 <= buffer->count);
+    assert(buffer->count <= buffer->capacity);
+    if(buffer->capacity > 0) {
+        for(isize i = 0; i < item_size; i++)
+            assert(buffer->data[buffer->count*item_size + i] == 0);
+    }
+
+    if(new_cap > buffer->capacity)
+    {
+        void* new_data = NULL;
+        int64_t new_capaity = buffer->capacity*3/2 + 8;
+        if(new_capaity < new_cap)
+            new_capaity = new_cap;
+
+        if(buffer->is_allocated)
+            new_data = realloc(buffer->data, new_capaity*item_size + item_size);
+        else {
+            new_data = malloc(new_capaity*item_size + 1);
+            memcpy(new_data, buffer->data, buffer->capacity*item_size);
+        }
+
+        memset((char*) new_data + buffer->capacity*item_size, 0, (new_capaity*item_size + item_size - buffer->capacity*item_size));
+        buffer->capacity = new_capaity;
+        buffer->data = new_data;
+        buffer->is_allocated = true;
+    }
+}
+
+static void _plt_buffer_resize(Plt_Buffer_Base* buffer, int64_t item_size, int64_t new_size)
+{
+    assert(new_size >= 0);
+    if(new_size < 0)
+        new_size = 0;
+
+    _plt_buffer_reserve(buffer, item_size, new_size);
     buffer->size = new_size;
     memset((char*) buffer->data + buffer->size*item_size, 0, item_size);
 }
 
-static void _buffer_append(Buffer_Base* buffer, int64_t item_size, const void* data, int64_t data_count, int64_t data_size)
+static void _plt_buffer_append(Plt_Buffer_Base* buffer, int64_t item_size, const void* data, int64_t data_count, int64_t data_size)
 {
     assert(item_size == data_size); (void) data_size;
-    _buffer_reserve(buffer, item_size, buffer->size + data_count);
+    if(count <= 0)
+        return;
+
+    _plt_buffer_reserve(buffer, item_size, buffer->count + count);
     memcpy((char*) buffer->data + buffer->size*item_size, data, data_count*item_size);
     buffer->size += data_count;
     memset((char*) buffer->data + buffer->size*item_size, 0, item_size);
 }
 
 //Nasty conversions
-static char* _utf16_to_utf8(String_Buffer* append_to_or_null, const wchar_t* string, int64_t string_size) 
+static char* _utf16_to_utf8(Plt_String_Buffer* append_to_or_null, const wchar_t* string, int64_t string_size) 
 {
-    String_Buffer local = {0};
-    String_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
+    Plt_String_Buffer local = {0};
+    Plt_String_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
 
     int utf8len = WideCharToMultiByte(CP_UTF8, 0, string, (int) string_size, NULL, 0, NULL, NULL);
-    buffer_resize(append_to, utf8len);
+    plt_buffer_resize(append_to, utf8len);
     WideCharToMultiByte(CP_UTF8, 0, string, (int) string_size, append_to->data, (int) utf8len, 0, 0);
     append_to->data[utf8len] = '\0';
     return append_to->data;
 }
 
-static wchar_t* _utf8_to_utf16(WString_Buffer* append_to_or_null, const char* string, int64_t string_size) 
+static wchar_t* _utf8_to_utf16(Plt_WString_Buffer* append_to_or_null, const char* string, int64_t string_size) 
 {
-    WString_Buffer local = {0};
-    WString_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
+    Plt_WString_Buffer local = {0};
+    Plt_WString_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
 
     int utf16len = MultiByteToWideChar(CP_UTF8, 0, string, (int) string_size, NULL, 0);
-    buffer_resize(append_to, utf16len);
+    plt_buffer_resize(append_to, utf16len);
     MultiByteToWideChar(CP_UTF8, 0, string, (int) string_size, append_to->data, (int) utf16len);
     append_to->data[utf16len] = '\0';
     return append_to->data;
 }
 
-static wchar_t* _wstring_path(WString_Buffer* append_to_or_null, Platform_String path)
+static wchar_t* _wstring_path(Plt_WString_Buffer* append_to_or_null, Platform_String path)
 {
-    WString_Buffer local = {0};
-    WString_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
+    Plt_WString_Buffer local = {0};
+    Plt_WString_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
     wchar_t* str = _utf8_to_utf16(append_to, path.data, path.count);
     for(int64_t i = 0; i < append_to->size; i++)
     {
@@ -694,10 +691,10 @@ static wchar_t* _wstring_path(WString_Buffer* append_to_or_null, Platform_String
     return str;
 }
 
-static char* _string_path(String_Buffer* append_to_or_null, const wchar_t* string, int64_t string_size)
+static char* _string_path(Plt_String_Buffer* append_to_or_null, const wchar_t* string, int64_t string_size)
 {
-    String_Buffer local = {0};
-    String_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
+    Plt_String_Buffer local = {0};
+    Plt_String_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
     char* str = _utf16_to_utf8(append_to, string, string_size);
     for(int64_t i = 0; i < append_to->size; i++)
     {
@@ -707,7 +704,6 @@ static char* _string_path(String_Buffer* append_to_or_null, const wchar_t* strin
 
     return str;
 }
-
 
 //TODO move out
 int64_t platform_translate_error(Platform_Error error, char* translated, int64_t translated_size)
@@ -786,7 +782,7 @@ Platform_Error platform_file_open(Platform_File* file, Platform_String file_path
 {
     platform_file_close(file);
 
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* path = _wstring_path(&buffer, file_path);
 
     DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
@@ -833,7 +829,7 @@ Platform_Error platform_file_open(Platform_File* file, Platform_String file_path
     HANDLE handle = CreateFileW(path, access, share, security, creation, flags, template_handle);
     file->handle = _platform_flip_handle(handle);
 
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
     return _platform_error_code(file->handle != NULL);
 }
 
@@ -937,37 +933,37 @@ Platform_Error platform_file_size(const Platform_File* file, isize* size)
     return _platform_error_code(state);
 }
 
-Platform_Error platform_file_read_entire(Platform_String file_path, void* buffer, isize buffer_size)
+Platform_Error platform_file_read_entire(Platform_String file_path, void* buffer, isize plt_buffer_size)
 {
     Platform_File file = {0};
     Platform_Error error = platform_file_open(&file, file_path, PLATFORM_FILE_OPEN_READ | PLATFORM_FILE_OPEN_HINT_FRONT_TO_BACK_ACCESS);
     isize read = 0;
     if(error == 0)
-        error = platform_file_read(&file, buffer, buffer_size, 0, &read);
-    if(error == 0 && read != buffer_size)
+        error = platform_file_read(&file, buffer, plt_buffer_size, 0, &read);
+    if(error == 0 && read != plt_buffer_size)
         error = PLATFORM_ERROR_OTHER;
     platform_file_close(&file);
     return error;
 }
 
-Platform_Error platform_file_write_entire(Platform_String file_path, const void* buffer, isize buffer_size, bool fail_if_not_found)
+Platform_Error platform_file_write_entire(Platform_String file_path, const void* buffer, isize plt_buffer_size, bool fail_if_not_found)
 {
     Platform_File file = {0};
     Platform_Error error = platform_file_open(&file, file_path, 
             PLATFORM_FILE_OPEN_WRITE | PLATFORM_FILE_OPEN_REMOVE_CONTENT | (fail_if_not_found ? 0 : PLATFORM_FILE_OPEN_CREATE) | PLATFORM_FILE_OPEN_HINT_FRONT_TO_BACK_ACCESS);
     if(error == 0)
-        error = platform_file_write(&file, buffer, buffer_size, 0);
+        error = platform_file_write(&file, buffer, plt_buffer_size, 0);
     platform_file_close(&file);
     return error;
 }
 
-Platform_Error platform_file_append_entire(Platform_String file_path, const void* buffer, isize buffer_size, bool fail_if_not_found)
+Platform_Error platform_file_append_entire(Platform_String file_path, const void* buffer, isize plt_buffer_size, bool fail_if_not_found)
 {
     Platform_File file = {0};
     Platform_Error error = platform_file_open(&file, file_path, 
             PLATFORM_FILE_OPEN_WRITE | (fail_if_not_found ? 0 : PLATFORM_FILE_OPEN_CREATE) | PLATFORM_FILE_OPEN_HINT_FRONT_TO_BACK_ACCESS);
     if(error == 0)
-        error = _platform_file_write(&file, buffer, buffer_size, 0, true);
+        error = _platform_file_write(&file, buffer, plt_buffer_size, 0, true);
     platform_file_close(&file);
     return error;
 }
@@ -977,7 +973,7 @@ Platform_Error platform_file_append_entire(Platform_String file_path, const void
 //=========================================
 Platform_Error platform_file_create(Platform_String file_path, bool fail_if_exists)
 {
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* path = _wstring_path(&buffer, file_path);
 
     HANDLE handle = CreateFileW(path, 0, 0, NULL, OPEN_ALWAYS, 0, NULL);
@@ -991,12 +987,12 @@ Platform_Error platform_file_create(Platform_String file_path, bool fail_if_exis
 
     Platform_Error error = _platform_error_code(state);
     CloseHandle(handle);
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
     return error;
 }
 Platform_Error platform_file_remove(Platform_String file_path, bool fail_if_does_not_exist)
 {
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* path = _wstring_path(&buffer, file_path);
 
     SetFileAttributesW(path, FILE_ATTRIBUTE_NORMAL);
@@ -1008,14 +1004,14 @@ Platform_Error platform_file_remove(Platform_String file_path, bool fail_if_does
             state = true;
     }
 
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
     return _platform_error_code(state);
 }
 
 Platform_Error platform_file_move(Platform_String new_path, Platform_String old_path, bool override_if_used)
 {       
-    WString_Buffer new_backed = {0}; buffer_init_backed(&new_backed, _LOCAL_BUFFER_SIZE);
-    WString_Buffer old_backed = {0}; buffer_init_backed(&old_backed, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer new_backed = {0}; plt_buffer_init_backed(&new_backed, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer old_backed = {0}; plt_buffer_init_backed(&old_backed, _LOCAL_BUFFER_SIZE);
     const wchar_t* new_path_norm = _wstring_path(&new_backed, new_path);
     const wchar_t* old_path_norm = _wstring_path(&old_backed, old_path);
 
@@ -1025,15 +1021,15 @@ Platform_Error platform_file_move(Platform_String new_path, Platform_String old_
 
     bool state = !!MoveFileExW(old_path_norm, new_path_norm, flags);
     
-    buffer_deinit(&new_backed);
-    buffer_deinit(&old_backed);
+    plt_buffer_deinit(&new_backed);
+    plt_buffer_deinit(&old_backed);
     return _platform_error_code(state);
 }
 
 Platform_Error platform_file_copy(Platform_String new_path, Platform_String old_path, bool override_if_used)
 {
-    WString_Buffer new_backed = {0}; buffer_init_backed(&new_backed, _LOCAL_BUFFER_SIZE);
-    WString_Buffer old_backed = {0}; buffer_init_backed(&old_backed, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer new_backed = {0}; plt_buffer_init_backed(&new_backed, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer old_backed = {0}; plt_buffer_init_backed(&old_backed, _LOCAL_BUFFER_SIZE);
     const wchar_t* new_path_norm = _wstring_path(&new_backed, new_path);
     const wchar_t* old_path_norm = _wstring_path(&old_backed, old_path);
     //BOOL CopyFileExA(
@@ -1049,14 +1045,14 @@ Platform_Error platform_file_copy(Platform_String new_path, Platform_String old_
         flags |= COPY_FILE_FAIL_IF_EXISTS;
     bool state = !!CopyFileExW(old_path_norm, new_path_norm, NULL, NULL, FALSE, flags);
     
-    buffer_deinit(&new_backed);
-    buffer_deinit(&old_backed);
+    plt_buffer_deinit(&new_backed);
+    plt_buffer_deinit(&old_backed);
     return _platform_error_code(state);
 }
 
 Platform_Error platform_file_resize(Platform_String file_path, isize size)
 {
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* path = _wstring_path(&buffer, file_path);
 
     HANDLE handle = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -1075,7 +1071,7 @@ Platform_Error platform_file_resize(Platform_String file_path, isize size)
 
     Platform_Error error = _platform_error_code(state);
     CloseHandle(handle);
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
 
     return error;
 }
@@ -1085,7 +1081,7 @@ Platform_Error platform_file_info(Platform_String file_path, Platform_File_Info*
     Platform_File_Info info = {0};
     WIN32_FILE_ATTRIBUTE_DATA native_info = {0};
     
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* path = _wstring_path(&buffer, file_path);
     bool state = !!GetFileAttributesExW(path, GetFileExInfoStandard, &native_info);
     
@@ -1113,7 +1109,7 @@ Platform_Error platform_file_info(Platform_String file_path, Platform_File_Info*
     if(info_or_null)
         *info_or_null = info;
 
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
     return _platform_error_code(state);
 }
 
@@ -1123,7 +1119,7 @@ Platform_Error platform_file_info(Platform_String file_path, Platform_File_Info*
 //=========================================
 Platform_Error platform_directory_create(Platform_String dir_path, bool fail_if_already_existing)
 {
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* path = _wstring_path(&buffer, dir_path);
     bool state = !!CreateDirectoryW(path, NULL);
     if(state == false && GetLastError() == ERROR_ALREADY_EXISTS)
@@ -1132,13 +1128,13 @@ Platform_Error platform_directory_create(Platform_String dir_path, bool fail_if_
             state = true;
     }
 
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
     return _platform_error_code(state);
 }
     
 Platform_Error platform_directory_remove(Platform_String dir_path, bool fail_if_not_found)
 {
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* path = _wstring_path(&buffer, dir_path);
     bool state = !!RemoveDirectoryW(path);
     if(state == false && GetLastError() == ERROR_PATH_NOT_FOUND)
@@ -1147,7 +1143,7 @@ Platform_Error platform_directory_remove(Platform_String dir_path, bool fail_if_
             state = true;
     }
 
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
     return _platform_error_code(state);
 }
 
@@ -1166,10 +1162,10 @@ Platform_Error platform_directory_iter_init(Platform_Directory_Iter* iter, Platf
     iter->internal = calloc(1, sizeof(_Platform_Dir_Iter));
     iter->index = -1;
 
-    WString_Buffer wide = {0};
-    buffer_init_backed(&wide, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer wide = {0};
+    plt_buffer_init_backed(&wide, _LOCAL_BUFFER_SIZE);
     _wstring_path(&wide, directory_path);
-    buffer_append(&wide, L"\\*.*", 4);
+    plt_buffer_append(&wide, L"\\*.*", 4);
 
     _Platform_Dir_Iter* it = (_Platform_Dir_Iter*) iter->internal;
     it->first_found = FindFirstFileW(wide.data, &it->current_entry);
@@ -1178,7 +1174,7 @@ Platform_Error platform_directory_iter_init(Platform_Directory_Iter* iter, Platf
     if(it->first_found == INVALID_HANDLE_VALUE)
         error = GetLastError();
     
-    buffer_deinit(&wide);
+    plt_buffer_deinit(&wide);
     return error;
 }
 
@@ -1223,23 +1219,23 @@ void platform_directory_iter_deinit(Platform_Directory_Iter* iter)
 //CWD madness
 Platform_Error platform_directory_set_current_working(Platform_String new_working_dir)
 {
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* path = _wstring_path(&buffer, new_working_dir);
     bool state = _wchdir(path) == 0;
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
     return _platform_error_code_posix(state);
 }
 
-Platform_Error platform_directory_get_current_working(void* buffer, isize buffer_size, bool* needs_bigger_buffer_or_null)
+Platform_Error platform_directory_get_current_working(void* buffer, isize plt_buffer_size, bool* needs_bigger_plt_buffer_or_null)
 {
-    assert(buffer != NULL || (buffer == NULL && buffer_size == 0));
+    assert(buffer != NULL || (buffer == NULL && plt_buffer_size == 0));
 
     bool ok = true;
-    if(buffer_size > 0)
-        ok = _getcwd(buffer, (int) buffer_size) != NULL;
+    if(plt_buffer_size > 0)
+        ok = _getcwd(buffer, (int) plt_buffer_size) != NULL;
     
-    if(*needs_bigger_buffer_or_null)
-        *needs_bigger_buffer_or_null = errno == ERANGE;
+    if(*needs_bigger_plt_buffer_or_null)
+        *needs_bigger_plt_buffer_or_null = errno == ERANGE;
     return _platform_error_code_posix(ok);
 }
 
@@ -1261,15 +1257,15 @@ const char* platform_get_executable_path()
     static const char* dir = {0};
     if(platform_once_begin(&init))
     {
-        WString_Buffer wide = {0};
-        WString_Buffer full_path = {0};
-        buffer_init_backed(&wide, _LOCAL_BUFFER_SIZE);
-        buffer_init_backed(&full_path, _LOCAL_BUFFER_SIZE);
+        Plt_WString_Buffer wide = {0};
+        Plt_WString_Buffer full_path = {0};
+        plt_buffer_init_backed(&wide, _LOCAL_BUFFER_SIZE);
+        plt_buffer_init_backed(&full_path, _LOCAL_BUFFER_SIZE);
 
-        buffer_resize(&wide, MAX_PATH);
+        plt_buffer_resize(&wide, MAX_PATH);
         for(int64_t i = 0; i < 16; i++)
         {
-            buffer_resize(&wide, wide.size * 2);
+            plt_buffer_resize(&wide, wide.size * 2);
             int64_t count = GetModuleFileNameW(NULL, wide.data, (DWORD) wide.size);
             if(count < wide.size)
                 break;
@@ -1278,13 +1274,13 @@ const char* platform_get_executable_path()
         int64_t needed_size = GetFullPathNameW(wide.data, (DWORD) full_path.size, full_path.data, NULL);
         if(needed_size > full_path.size)
         {
-            buffer_resize(&full_path, needed_size);
+            plt_buffer_resize(&full_path, needed_size);
             needed_size = GetFullPathNameW(wide.data, (DWORD) full_path.size, full_path.data, NULL);
         }
         
         dir = _string_path(NULL, full_path.data, full_path.size);
-        buffer_deinit(&full_path);
-        buffer_deinit(&wide);
+        plt_buffer_deinit(&full_path);
+        plt_buffer_deinit(&wide);
 
         assert(dir != NULL);
         platform_once_end(&init);
@@ -1302,14 +1298,14 @@ typedef struct _Platform_File_Watch_Context {
     BOOL win_watch_subdir;
 
     int32_t flags;
-    String_Buffer watched_path;
-    String_Buffer change_path;
-    String_Buffer change_new_path;
+    Plt_String_Buffer watched_path;
+    Plt_String_Buffer change_path;
+    Plt_String_Buffer change_new_path;
     
     uint8_t* buffer;
-    isize buffer_size;
-    isize buffer_capacity;
-    isize buffer_offset;
+    isize plt_buffer_size;
+    isize plt_buffer_capacity;
+    isize plt_buffer_offset;
 } _Platform_File_Watch_Context;
 
 void platform_file_watch_deinit(Platform_File_Watch* watched)
@@ -1322,9 +1318,9 @@ void platform_file_watch_deinit(Platform_File_Watch* watched)
         if(context->overlapped.hEvent != INVALID_HANDLE_VALUE && context->overlapped.hEvent != NULL)
             CloseHandle(context->overlapped.hEvent);
 
-        buffer_deinit(&context->watched_path);
-        buffer_deinit(&context->change_path);
-        buffer_deinit(&context->change_new_path);
+        plt_buffer_deinit(&context->watched_path);
+        plt_buffer_deinit(&context->change_path);
+        plt_buffer_deinit(&context->change_new_path);
 
         free(context->buffer);
         free(context);
@@ -1333,7 +1329,7 @@ void platform_file_watch_deinit(Platform_File_Watch* watched)
         memset(watched, 0, sizeof *watched);
 }
 
-Platform_Error platform_file_watch_init(Platform_File_Watch* file_watch, int32_t flags, Platform_String path, isize buffer_size)
+Platform_Error platform_file_watch_init(Platform_File_Watch* file_watch, int32_t flags, Platform_String path, isize plt_buffer_size)
 {
     bool ok = false;
     platform_file_watch_deinit(file_watch);
@@ -1355,13 +1351,13 @@ Platform_Error platform_file_watch_init(Platform_File_Watch* file_watch, int32_t
             context->win_flags |= FILE_NOTIFY_CHANGE_DIR_NAME;
 
         context->win_watch_subdir = !!(flags & PLATFORM_FILE_WATCH_SUBDIRECTORIES);
-        context->buffer_capacity = buffer_size <= 0 ? 64*1024 : buffer_size;
-        context->buffer = (uint8_t*) malloc(context->buffer_capacity);
-        buffer_reserve(&context->change_path, _LOCAL_BUFFER_SIZE);
-        buffer_reserve(&context->change_new_path, _LOCAL_BUFFER_SIZE);
-        buffer_append(&context->watched_path, path.data, path.count);
+        context->plt_buffer_capacity = plt_buffer_size <= 0 ? 64*1024 : plt_buffer_size;
+        context->buffer = (uint8_t*) malloc(context->plt_buffer_capacity);
+        plt_buffer_reserve(&context->change_path, _LOCAL_BUFFER_SIZE);
+        plt_buffer_reserve(&context->change_new_path, _LOCAL_BUFFER_SIZE);
+        plt_buffer_append(&context->watched_path, path.data, path.count);
 
-        WString_Buffer wpath_buffer = {0}; buffer_init_backed(&wpath_buffer, _LOCAL_BUFFER_SIZE);
+        Plt_WString_Buffer wpath_buffer = {0}; plt_buffer_init_backed(&wpath_buffer, _LOCAL_BUFFER_SIZE);
         const wchar_t* wpath = _wstring_path(&wpath_buffer, path);
             context->directory = CreateFileW(wpath,
                 FILE_LIST_DIRECTORY,
@@ -1370,11 +1366,11 @@ Platform_Error platform_file_watch_init(Platform_File_Watch* file_watch, int32_t
                 OPEN_EXISTING,
                 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
                 NULL);
-        buffer_deinit(&wpath_buffer);
+        plt_buffer_deinit(&wpath_buffer);
 
         if(context->directory != INVALID_HANDLE_VALUE) {
             ok = ReadDirectoryChangesW(
-                context->directory, context->buffer, (DWORD) context->buffer_capacity, 
+                context->directory, context->buffer, (DWORD) context->plt_buffer_capacity, 
                 context->win_watch_subdir, context->win_flags, NULL, &context->overlapped, NULL);
         }
     }
@@ -1391,8 +1387,8 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
     if(file_watch && file_watch->handle)
     {
         _Platform_File_Watch_Context* context = (_Platform_File_Watch_Context*) file_watch->handle;
-        buffer_resize(&context->change_new_path, 0);
-        buffer_resize(&context->change_path, 0);
+        plt_buffer_resize(&context->change_new_path, 0);
+        plt_buffer_resize(&context->change_path, 0);
         isize new_name_count = 0; 
         isize old_name_count = 0; 
 
@@ -1400,9 +1396,9 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
         // + handle the rename events which are split between two calls
         for(;;) {
             //if we are at the end of the buffer try to get more changes from the os
-            if(context->buffer_offset >= context->buffer_size) {
-                context->buffer_offset = 0;
-                context->buffer_size = 0;
+            if(context->plt_buffer_offset >= context->plt_buffer_size) {
+                context->plt_buffer_offset = 0;
+                context->plt_buffer_size = 0;
 
                 //Check the completion of previous ReadDirectoryChangesW
                 DWORD bytes_transferred = 0;
@@ -1423,14 +1419,14 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
                 if(context->overlapped.Internal == 0x103 /* STATUS_IO_PENDING */) 
                     break;
                 
-                bytes_transferred = (DWORD) context->buffer_capacity;
+                bytes_transferred = (DWORD) context->plt_buffer_capacity;
                 #endif
                 
-                context->buffer_size = bytes_transferred;
+                context->plt_buffer_size = bytes_transferred;
             }
 
             //If we succeded yet size is zero then we overflown
-            if(context->buffer_size == 0) {
+            if(context->plt_buffer_size == 0) {
                 user_event->action = PLATFORM_FILE_WATCH_OVERFLOW;
                 user_event->watched_path.data = context->watched_path.data;
                 user_event->watched_path.count = context->watched_path.size;
@@ -1438,8 +1434,8 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
                 break;
             } 
                 
-            ASSERT(context->buffer_offset < context->buffer_size);
-            FILE_NOTIFY_INFORMATION *event = (FILE_NOTIFY_INFORMATION*) (context->buffer + context->buffer_offset);
+            ASSERT(context->plt_buffer_offset < context->plt_buffer_size);
+            FILE_NOTIFY_INFORMATION *event = (FILE_NOTIFY_INFORMATION*) (context->buffer + context->plt_buffer_offset);
             
             //Fill out info and convert paths
             int32_t action = 0;
@@ -1453,8 +1449,8 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
             }
             
             isize path_len = event->FileNameLength / sizeof(wchar_t);
-            if(path_len > context->buffer_size - context->buffer_offset)
-                path_len = context->buffer_size - context->buffer_offset;
+            if(path_len > context->plt_buffer_size - context->plt_buffer_offset)
+                path_len = context->plt_buffer_size - context->plt_buffer_offset;
 
             if(event->Action == FILE_ACTION_RENAMED_NEW_NAME)
                 _string_path(&context->change_new_path, event->FileName, path_len);
@@ -1463,17 +1459,17 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
 
             //last entry has NextEntryOffset == 0
             if (event->NextEntryOffset) 
-                context->buffer_offset += event->NextEntryOffset;
+                context->plt_buffer_offset += event->NextEntryOffset;
             else 
-                context->buffer_offset = context->buffer_size;
+                context->plt_buffer_offset = context->plt_buffer_size;
 
-            if(context->buffer_offset >= context->buffer_size) {
-                context->buffer_offset = 0;
-                context->buffer_size = 0;
+            if(context->plt_buffer_offset >= context->plt_buffer_size) {
+                context->plt_buffer_offset = 0;
+                context->plt_buffer_size = 0;
                 
                 //queue more changes (maybe we dont need this?? test it without this?)
                 ReadDirectoryChangesW(
-                    context->directory, context->buffer, (DWORD) context->buffer_capacity, 
+                    context->directory, context->buffer, (DWORD) context->plt_buffer_capacity, 
                     context->win_watch_subdir, context->win_flags,
                     NULL, &context->overlapped, NULL);
             }
@@ -1506,10 +1502,10 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
 //=========================================
 Platform_Error platform_dll_load(Platform_DLL* dll, Platform_String path)
 {
-    WString_Buffer buffer = {0}; buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
+    Plt_WString_Buffer buffer = {0}; plt_buffer_init_backed(&buffer, _LOCAL_BUFFER_SIZE);
     const wchar_t* wpath = _utf8_to_utf16(&buffer, path.data, path.count);
     HMODULE hmodule = LoadLibraryW(wpath);
-    buffer_deinit(&buffer);
+    plt_buffer_deinit(&buffer);
     
     if(dll)
         dll->handle = (void*) hmodule;
@@ -1529,13 +1525,13 @@ void platform_dll_unload(Platform_DLL* dll)
 
 void* platform_dll_get_function(Platform_DLL* dll, Platform_String name)
 {
-    String_Buffer temp = {0};
-    buffer_init_backed(&temp, 256);
-    buffer_append(&temp, name.data, name.count);
+    Plt_String_Buffer temp = {0};
+    plt_buffer_init_backed(&temp, 256);
+    plt_buffer_append(&temp, name.data, name.count);
     HMODULE hmodule = (HMODULE)dll->handle;
     void* result = (void*) GetProcAddress(hmodule, temp.data);
 
-    buffer_deinit(&temp);
+    plt_buffer_deinit(&temp);
     return result;
 }
 

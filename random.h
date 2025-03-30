@@ -318,7 +318,7 @@ static inline uint64_t random_xiroshiro256(uint64_t s[4])
 	{
 		REQUIRE(size >= 0);
 		enum {LOCAL = 16};
-		char temp[LOCAL] = {0};
+		char temp[LOCAL]; (void) temp;
 	
 		int64_t repeats = size / LOCAL;
 		int64_t remainder = size % LOCAL;
@@ -342,8 +342,10 @@ static inline uint64_t random_xiroshiro256(uint64_t s[4])
 	EXTERNAL void random_shuffle_from(Random_State* state, void* elements, int64_t element_count, int64_t element_size)
 	{
 		REQUIRE(element_count >= 0 && element_size >= 0);
+		REQUIRE(elements != NULL || element_count == 0 || element_size == 0);
+
 		enum {LOCAL = 256};
-		char temp[LOCAL] = {0};
+		char temp[LOCAL]; (void) temp;
 		char* elems = (char*) elements;
 		int64_t s = element_size;
 
@@ -374,23 +376,17 @@ static inline uint64_t random_xiroshiro256(uint64_t s[4])
 	EXTERNAL void random_bytes_from(Random_State* state, void* into, int64_t size)
 	{
 		REQUIRE(size >= 0);
-		uint64_t full_randoms = (uint64_t) size / 8;
+		uint64_t whole = (uint64_t) size / 8;
 		uint64_t remainder = (uint64_t) size % 8;
-		uint64_t* fulls = (uint64_t*) into;
 	
-		for(uint64_t i = 0; i < full_randoms; i++)
-			fulls[i] = random_u64_from(state);
+		for(uint64_t i = 0; i < whole; i++) {
+			uint64_t r = random_u64_from(state);
+			memcpy((uint8_t*) into + i*8, &r, 8);
+		} 
 
-		if(remainder)
-		{
-			union {
-				uint64_t val; 
-				char bytes[8];
-			} last = {random_u64_from(state)};	
-
-			char* bytes = (char*) into + full_randoms*sizeof(uint64_t);
-			for(uint64_t i = 0; i < remainder; i++)
-				bytes[i] = last.bytes[i];
+		if(remainder) {
+			uint64_t r = random_u64_from(state);
+			memcpy((uint8_t*) into + whole*8, &r, remainder);
 		}
 	}
 
@@ -409,15 +405,14 @@ static inline uint64_t random_xiroshiro256(uint64_t s[4])
 		if(distribution_size <= 0)  
 			return 0;
 
-		int64_t range_lo = distribution[0]._chance_cumulative;
+		int64_t range_lo = 0;
 		int64_t range_hi = distribution[distribution_size - 1]._chance_cumulative;
 		int64_t random = random_range_from(state, range_lo, range_hi);
 
 		int64_t low_i = 0;
 		int64_t count = distribution_size;
 
-		while (count > 0)
-		{
+		while (count > 0) {
 			int64_t step = count / 2;
 			int64_t curr = low_i + step;
 			if(distribution[curr]._chance_cumulative < random)

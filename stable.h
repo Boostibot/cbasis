@@ -395,6 +395,7 @@ EXTERNAL void stable_reserve(Stable* stable, isize to_size)
         //If the ptr array needs reallocating
         if(stable->blocks_count + added_blocks > stable->blocks_capacity)
         {
+            TEST(to_size < INT64_MAX/4);
             isize new_capacity = 16;
             while(new_capacity < stable->blocks_count + added_blocks)
                 new_capacity *= 2;
@@ -429,7 +430,7 @@ EXTERNAL void stable_reserve(Stable* stable, isize to_size)
         stable->blocks_count += (uint32_t) added_blocks;
         _stable_check_consistency(stable);
     }
-
+    
     ASSERT(stable->first_free != 0, "needs to have a place thats not filled when we reserved one!");
 }
 
