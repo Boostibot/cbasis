@@ -506,6 +506,13 @@ MATHAPI Vec3 mat4_apply_normalize(Mat4 mat, Vec3 vec)
 }
 
 MATHAPI Vec3 mat4_apply(Mat4 mat, Vec3 vec)
+MATHAPI Vec3 mat4_apply_normalize(Mat4 mat, Vec3 vec)
+>>>>>>> Stashed changes
+{
+    Vec3 scaled = mat4_mul_vec3(mat, vec);
+    return vec3_add(scaled, mat.col[3].xyz);
+}
+
 MATHAPI Vec3 mat4_apply(Mat4 mat, Vec3 vec)
 {
     Vec3 scaled = mat4_mul_vec3(mat, vec);
