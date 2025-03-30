@@ -126,8 +126,9 @@ Platform_Error platform_virtual_reallocate(void** output_adress_or_null, void* a
     return out;
 }
 
-void* platform_heap_reallocate(int64_t new_size, void* old_ptr, int64_t align)
+void* platform_heap_reallocate(isize new_size, void* old_ptr, isize old_size, isize align)
 {
+    (void) old_size;
     assert(align > 0 && new_size >= 0);
     if(new_size == 0)
     {
@@ -198,7 +199,7 @@ unsigned _thread_func(void* args)
         free(wide_name);
     }
 
-    state->func(state->state);
+    state->func(state->context);
 
     free(state->name);
     free(state);
@@ -233,7 +234,7 @@ Platform_Error platform_thread_launch(isize stack_size_or_zero, void (*func)(voi
         if(handle) 
             return PLATFORM_ERROR_OK;
 
-        freeplatform_thread_launch(thread_context->name);
+        free(thread_context->name);
     }
 
     free(thread_context);
@@ -548,12 +549,12 @@ int64_t platform_epoch_time_startup()
 //Null terminated buffer (String builder) 
 #define PLt_Buffer(T) \
     struct { \
-        int32_t is_alloced; \
+        int32_t is_allocated; \
         int32_t _; \
         int64_t count; \
         int64_t capacity; \
         T* data; \
-    }; \
+    } \
 
 typedef PLt_Buffer(uint8_t) Plt_Buffer_Base;
 typedef PLt_Buffer(char)    Plt_String_Buffer;
@@ -581,7 +582,7 @@ typedef PLt_Buffer(wchar_t) Plt_WString_Buffer;
 
 static void _plt_buffer_deinit(Plt_Buffer_Base* buffer)
 {
-    if(buffer->is_alloced)
+    if(buffer->is_allocated)
         (void) free(buffer->data);
     
     memset(buffer, 0, sizeof *buffer);
@@ -592,7 +593,7 @@ static void _plt_buffer_init_backed(Plt_Buffer_Base* buffer, int64_t item_size, 
     _plt_buffer_deinit(buffer);
     if(backing_size > 1) {
         buffer->data = backing;
-        buffer->is_alloced = false;
+        buffer->is_allocated = false;
         buffer->capacity = backing_size - 1;
         memset(backing, 0, backing_size*item_size);
     }
@@ -618,7 +619,7 @@ static void _plt_buffer_reserve(Plt_Buffer_Base* buffer, int64_t item_size, int6
         if(buffer->is_allocated)
             new_data = realloc(buffer->data, new_capaity*item_size + item_size);
         else {
-            new_data = malloc(new_capaity*item_size + 1);
+            new_data = malloc(new_capaity*item_size + item_size);
             memcpy(new_data, buffer->data, buffer->capacity*item_size);
         }
 
@@ -636,20 +637,21 @@ static void _plt_buffer_resize(Plt_Buffer_Base* buffer, int64_t item_size, int64
         new_size = 0;
 
     _plt_buffer_reserve(buffer, item_size, new_size);
-    buffer->size = new_size;
-    memset((char*) buffer->data + buffer->size*item_size, 0, item_size);
+    buffer->count = new_size;
+    if(buffer->capacity != 0)
+        memset((char*) buffer->data + buffer->count*item_size, 0, item_size);
 }
 
 static void _plt_buffer_append(Plt_Buffer_Base* buffer, int64_t item_size, const void* data, int64_t data_count, int64_t data_size)
 {
     assert(item_size == data_size); (void) data_size;
-    if(count <= 0)
+    if(data_count <= 0)
         return;
 
-    _plt_buffer_reserve(buffer, item_size, buffer->count + count);
-    memcpy((char*) buffer->data + buffer->size*item_size, data, data_count*item_size);
-    buffer->size += data_count;
-    memset((char*) buffer->data + buffer->size*item_size, 0, item_size);
+    _plt_buffer_reserve(buffer, item_size, buffer->count + data_count);
+    memcpy((char*) buffer->data + buffer->count*item_size, data, data_count*item_size);
+    buffer->count += data_count;
+    memset((char*) buffer->data + buffer->count*item_size, 0, item_size);
 }
 
 //Nasty conversions
@@ -682,7 +684,7 @@ static wchar_t* _wstring_path(Plt_WString_Buffer* append_to_or_null, Platform_St
     Plt_WString_Buffer local = {0};
     Plt_WString_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
     wchar_t* str = _utf8_to_utf16(append_to, path.data, path.count);
-    for(int64_t i = 0; i < append_to->size; i++)
+    for(int64_t i = 0; i < append_to->count; i++)
     {
         if(str[i] == '\\')
             str[i] = '/';
@@ -696,7 +698,7 @@ static char* _string_path(Plt_String_Buffer* append_to_or_null, const wchar_t* s
     Plt_String_Buffer local = {0};
     Plt_String_Buffer* append_to = append_to_or_null ? append_to_or_null : &local;
     char* str = _utf16_to_utf8(append_to, string, string_size);
-    for(int64_t i = 0; i < append_to->size; i++)
+    for(int64_t i = 0; i < append_to->count; i++)
     {
         if(str[i] == '\\')
             str[i] = '/';
@@ -1265,20 +1267,20 @@ const char* platform_get_executable_path()
         plt_buffer_resize(&wide, MAX_PATH);
         for(int64_t i = 0; i < 16; i++)
         {
-            plt_buffer_resize(&wide, wide.size * 2);
-            int64_t count = GetModuleFileNameW(NULL, wide.data, (DWORD) wide.size);
-            if(count < wide.size)
+            int64_t count = GetModuleFileNameW(NULL, wide.data, (DWORD) wide.count);
+            if(count < wide.count)
                 break;
+            plt_buffer_resize(&wide, wide.count * 2);
         }
 
-        int64_t needed_size = GetFullPathNameW(wide.data, (DWORD) full_path.size, full_path.data, NULL);
-        if(needed_size > full_path.size)
+        int64_t needed_size = GetFullPathNameW(wide.data, (DWORD) full_path.count, full_path.data, NULL);
+        if(needed_size > full_path.count)
         {
             plt_buffer_resize(&full_path, needed_size);
-            needed_size = GetFullPathNameW(wide.data, (DWORD) full_path.size, full_path.data, NULL);
+            needed_size = GetFullPathNameW(wide.data, (DWORD) full_path.count, full_path.data, NULL);
         }
         
-        dir = _string_path(NULL, full_path.data, full_path.size);
+        dir = _string_path(NULL, full_path.data, full_path.count);
         plt_buffer_deinit(&full_path);
         plt_buffer_deinit(&wide);
 
@@ -1429,7 +1431,7 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
             if(context->plt_buffer_size == 0) {
                 user_event->action = PLATFORM_FILE_WATCH_OVERFLOW;
                 user_event->watched_path.data = context->watched_path.data;
-                user_event->watched_path.count = context->watched_path.size;
+                user_event->watched_path.count = context->watched_path.count;
                 ret = true;
                 break;
             } 
@@ -1479,13 +1481,13 @@ bool platform_file_watch_poll(Platform_File_Watch* file_watch, Platform_File_Wat
             if((action & context->flags) && old_name_count == new_name_count) {
                 user_event->action = (Platform_File_Watch_Flag) action;
                 user_event->path.data = context->change_path.data;
-                user_event->path.count = context->change_path.size;
+                user_event->path.count = context->change_path.count;
                 if(action == PLATFORM_FILE_WATCH_RENAMED) {
                     user_event->new_path.data = context->change_new_path.data;
-                    user_event->new_path.count = context->change_new_path.size;
+                    user_event->new_path.count = context->change_new_path.count;
                 }
                 user_event->watched_path.data = context->watched_path.data;
-                user_event->watched_path.count = context->watched_path.size;
+                user_event->watched_path.count = context->watched_path.count;
                 ret = true;
                 break;
             }

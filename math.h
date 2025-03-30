@@ -236,9 +236,9 @@ MATHAPI iVec2 ivec2_clamp(iVec2 clamped, iVec2 low, iVec2 high) { return ivec2_m
 MATHAPI iVec3 ivec3_clamp(iVec3 clamped, iVec3 low, iVec3 high) { return ivec3_max(low, ivec3_min(clamped, high)); }
 MATHAPI iVec4 ivec4_clamp(iVec4 clamped, iVec4 low, iVec4 high) { return ivec4_max(low, ivec4_min(clamped, high)); }
 
-MATHAPI iVec2 ivec2_mix(iVec2 a1, float s1, iVec2 a2, float s2) { return ivec2_add(ivec2_scale(a1, s1), ivec2_scale(a2, s2)); }
-MATHAPI iVec3 ivec3_mix(iVec3 a1, float s1, iVec3 a2, float s2) { return ivec3_add(ivec3_scale(a1, s1), ivec3_scale(a2, s2)); }
-MATHAPI iVec4 ivec4_mix(iVec4 a1, float s1, iVec4 a2, float s2) { return ivec4_add(ivec4_scale(a1, s1), ivec4_scale(a2, s2)); }
+MATHAPI iVec2 ivec2_mix(iVec2 a1, int s1, iVec2 a2, int s2) { return ivec2_add(ivec2_scale(a1, s1), ivec2_scale(a2, s2)); }
+MATHAPI iVec3 ivec3_mix(iVec3 a1, int s1, iVec3 a2, int s2) { return ivec3_add(ivec3_scale(a1, s1), ivec3_scale(a2, s2)); }
+MATHAPI iVec4 ivec4_mix(iVec4 a1, int s1, iVec4 a2, int s2) { return ivec4_add(ivec4_scale(a1, s1), ivec4_scale(a2, s2)); }
 
 MATHAPI iVec2 ivec2_lerp(iVec2 a, iVec2 b, int t) { return ivec2_add(ivec2_scale(a, 1 - t), ivec2_scale(b, t)); }
 MATHAPI iVec3 ivec3_lerp(iVec3 a, iVec3 b, int t) { return ivec3_add(ivec3_scale(a, 1 - t), ivec3_scale(b, t)); }
