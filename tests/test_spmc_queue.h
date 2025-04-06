@@ -14,11 +14,11 @@
 static void test_spmc_sequential(isize count, isize reserve_to)
 {
     SPMC_Queue q = {0};
-    spmc_queue_init(&q, sizeof(int), -1);
+    spmc_queue_init(&q, sizeof(isize), -1);
 
     //zero pop
-    int dummy = 0;
-    TEST(spmc_queue_pop(&q, &dummy, sizeof(int)) == false);
+    isize dummy = 0;
+    TEST(spmc_queue_pop(&q, &dummy, 1).success == false);
 
     //test zero capacity and count
     TEST(spmc_queue_capacity(&q) == 0);
@@ -28,42 +28,40 @@ static void test_spmc_sequential(isize count, isize reserve_to)
     TEST(spmc_queue_count(&q) == 0);
 
     //still pops should fail
-    TEST(spmc_queue_pop(&q, &dummy, sizeof(int)) == false);
+    TEST(spmc_queue_pop(&q, &dummy, 1).success == false);
     TEST(spmc_queue_count(&q) == 0);
 
     //push count
-    for(int i = 0; i < count; i++)
-        TEST(spmc_queue_push_st(&q, &i, sizeof(int)));
+    for(isize i = 0; i < count; i++)
+        TEST(spmc_queue_push_st(&q, &i, 1).success);
     
     //push one more potentially causing realloc
     dummy = 10;
-    TEST(spmc_queue_push_st(&q, &dummy, sizeof(int)));
+    TEST(spmc_queue_push_st(&q, &dummy, 1).success);
     TEST(spmc_queue_count(&q) == count + 1);
     TEST(spmc_queue_capacity(&q) >= count + 1);
 
     //pop count
-    for(int i = 0; i < count; i++)
+    for(isize i = 0; i < count; i++)
     {
-        int popped = 0;
-        TEST(spmc_queue_pop(&q, &popped, sizeof(int)));
+        isize popped = 0;
+        TEST(spmc_queue_pop(&q, &popped, 1).success);
         TEST(popped == i);
     }
 
     //popping it back
-    TEST(spmc_queue_pop(&q, &dummy, sizeof(int)));
+    TEST(spmc_queue_pop(&q, &dummy, 1).success);
     TEST(dummy == 10);
         
     //pop empty
-    TEST(spmc_queue_pop(&q, &dummy, sizeof(int)) == false);
-    TEST(spmc_queue_pop(&q, &dummy, sizeof(int)) == false);
+    TEST(spmc_queue_pop(&q, &dummy, 1).success == false);
+    TEST(spmc_queue_pop(&q, &dummy, 1).success == false);
     TEST(spmc_queue_count(&q) == 0);
     TEST(spmc_queue_capacity(&q) >= count + 1);
 
     //push some before dealloc
-    dummy = 10;
-    TEST(spmc_queue_push_st(&q, &dummy, sizeof(int)));
-    TEST(spmc_queue_push_st(&q, &dummy, sizeof(int)));
-    TEST(spmc_queue_push_st(&q, &dummy, sizeof(int)));
+    isize dummies[3] = {10, 10, 10};
+    TEST(spmc_queue_push_st(&q, dummies, 3).success == 3);
 
     spmc_queue_deinit(&q);
 }
@@ -87,28 +85,30 @@ typedef struct Test_SPMC_Thread {
 static int  test_spmc_isize_comp_func(const void* a, const void* b);
 static void test_spmc_launch_thread(void (*func)(void*), void* context);
 static void test_spmc_buffer_push(Test_SPMC_Buffer* buffer, isize* val, isize count);
-int64_t test_spmc_clock_ns();
 
 static void test_spmc_producer_consumers_thread_func(void *arg)
 {
     Test_SPMC_Thread* thread = (Test_SPMC_Thread*) arg;
     atomic_fetch_add(thread->started, 1);
-
-    //wait to run
-    while(*thread->run_test == 0); 
     
-    //run for as long as we can
+    //wait to run
+    while(atomic_load_explicit(thread->run_test, memory_order_seq_cst) == 0); 
+    
+    ////run for as long as we can
     while(*thread->run_test == 1)
     {
         isize val = 0;
-        if(spmc_queue_pop(thread->queue, &val, sizeof(isize)))
+        if(spmc_queue_pop(thread->queue, &val, 1).success) {
             test_spmc_buffer_push(&thread->popped, &val, 1);
+        }
     }
+    //while(*thread->run_test == 1); 
+    //printf("run: %lli\n", *thread->run_test);
 
     atomic_fetch_add(thread->finished, 1);
 }
 
-static void test_spmc_producer_consumers(isize reserve_size, isize consumer_count, double time, double producer_pop_back_chance, double producer_pop_front_chance)
+static void test_spmc_producer_consumers(isize reserve_size, isize consumer_count, double time, double producer_pop_back_chance)
 {
     SPMC_Queue queue = {0};
     spmc_queue_init(&queue, sizeof(isize), -1);
@@ -143,20 +143,15 @@ static void test_spmc_producer_consumers(isize reserve_size, isize consumer_coun
         isize deadline = clock() + (isize)(time*CLOCKS_PER_SEC);
         while(clock() < deadline)
         {
-            spmc_queue_push_st(&queue, &produced_counter, sizeof(isize));
+            spmc_queue_push_st(&queue, &produced_counter, 1);
             produced_counter += 1;
 
             double random = (double) rand() / RAND_MAX;
+            random = 1000;
             if(random < producer_pop_back_chance)
             {
                 isize popped = 0;
-                if(spmc_queue_pop(&queue, &popped, sizeof(isize)))
-                    test_spmc_buffer_push(&producer.popped, &popped, 1);
-            }
-            else if(random < producer_pop_back_chance + producer_pop_front_chance)
-            {
-                isize popped = 0;
-                if(spmc_queue_pop(&queue, &popped, sizeof(isize)))
+                if(spmc_queue_pop(&queue, &popped, 1).success)
                     test_spmc_buffer_push(&producer.popped, &popped, 1);
             }
         }
@@ -168,7 +163,7 @@ static void test_spmc_producer_consumers(isize reserve_size, isize consumer_coun
     //pop all remaining items
     {
         isize popped = 0;
-        while(spmc_queue_pop(&queue, &popped, sizeof(isize)))
+        while(spmc_queue_pop(&queue, &popped, 1).success)
             test_spmc_buffer_push(&producer.popped, &popped, 1);
     }
 
@@ -178,10 +173,12 @@ static void test_spmc_producer_consumers(isize reserve_size, isize consumer_coun
         Test_SPMC_Buffer buffer = {0};
         test_spmc_buffer_push(&buffer, producer.popped.data, producer.popped.count);
         
+        isize popped_during_runtime = 0;
         for(isize i = 0; i < consumer_count; i++)
         {
             Test_SPMC_Buffer* curr = &threads[i].popped;
             test_spmc_buffer_push(&buffer, curr->data, curr->count);
+            popped_during_runtime += curr->count; 
 
             //items in popped must be well ordered
             for(isize k = 1; k < curr->count; k++)
@@ -195,7 +192,7 @@ static void test_spmc_producer_consumers(isize reserve_size, isize consumer_coun
         for(isize i = 0; i < produced_counter; i++)
             TEST(buffer.data[i] == i);
 
-        printf("consumers:%lli total:%lli throughput:%.2lf millions/s\n", consumer_count, buffer.count, (double) buffer.count/(time*1e6));
+        printf("consumers:%lli pushed:%lli popped:%lli popped:%.2lf millions/s\n", consumer_count, produced_counter, popped_during_runtime, (double) popped_during_runtime/(time*1e6));
         free(buffer.data);
     }
     
@@ -220,10 +217,10 @@ static void test_spmc_queue(double time)
     
     if(time > 0)
     {
-        printf("test_spmc testing stress\n");
+        printf("test_spmc testing stress %.2lfs\n", time);
         enum {THREADS = 32};
         for(isize i = 1; i <= THREADS; i++) {
-            test_spmc_producer_consumers(1000, i, time/THREADS, 0.1, 0.1);
+            test_spmc_producer_consumers(1000, i, time/THREADS, 0.1);
         }
     }
     printf("test_spmc done!\n");
@@ -264,19 +261,6 @@ static int test_spmc_isize_comp_func(const void* a, const void* b)
     static void test_spmc_launch_thread(void (*func)(void*), void* context)
     {
          std::thread(func, context).detach();
-    }
-    #include <chrono>
-    int64_t test_spmc_clock_ns()
-    {
-        using namespace std::chrono;
-        return duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
-    }
-
-    static void test_spmc_sleep_thread(double seconds_val)
-    {
-        using namespace std::chrono;
-
-        std::this_thread::sleep_for(duration<double>(seconds_val));
     }
 #elif defined(_WIN32) || defined(_WIN64)
     #include <process.h>
