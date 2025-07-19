@@ -90,6 +90,15 @@
         "span": "c",
         "inotify.h": "c",
         "stddef.h": "c",
-        "cmath": "cpp"
+        "cmath": "cpp",
+        "concepts": "c",
+        "cstdio": "c",
+        "cstdlib": "c",
+        "cstring": "c",
+        "cwchar": "c",
+        "mutex": "c",
+        "new": "c",
+        "stdexcept": "c",
+        "stop_token": "c"
     }
 }

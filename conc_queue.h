@@ -128,8 +128,6 @@ CONC_QUEUE_API Conc_Queue_Result conc_queue_sized_pop_weak(Conc_Queue* q, isize 
 
 #endif
 
-#define MODULE_IMPL_ALL
-
 #if (defined(MODULE_IMPL_ALL) || defined(MODULE_CONC_QUEUE_IMPL)) && !defined(MODULE_CONC_QUEUE_HAS_IMPL)
 #define MODULE_CONC_QUEUE_HAS_IMPL
 

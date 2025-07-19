@@ -34,7 +34,7 @@ typedef unsigned long long llu;
 #endif
 
 #ifndef INTERNAL
-    #define INTERNAL inline static
+    #define INTERNAL static
 #endif
 
 #define MIN(a, b)               ((a) < (b) ? (a) : (b))

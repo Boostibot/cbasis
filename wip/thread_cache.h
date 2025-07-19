@@ -1,22 +1,16 @@
+#ifndef MODULE_THREAD_CACHE
+#define MODULE_THREAD_CACHE
+
 #include "../assert.h"
 #include "../platform.h"
+#include "../defines.h"
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 
-#ifdef __cplusplus
-    #include <atomic>
-    #define ATOMIC(T)    std::atomic<T>
-#else
-    #include <stdatomic.h>
-    #include <stdalign.h>
-    #define ATOMIC(T)    _Atomic(T) 
-#endif
-
 typedef int64_t isize; 
-typedef struct Thread_Cache_Thread Thread_Cache_Thread;
 
 typedef struct Thread_Cache_Config {
     isize min_stack_space_or_negative;
@@ -27,35 +21,15 @@ typedef struct Thread_Cache_Config {
     void* thread_context;
 } Thread_Cache_Config;
 
-typedef struct Thread_Cache {
-    const char* name;
-    ATOMIC(Thread_Cache_Thread*) threads;
-    ATOMIC(uint64_t) threads_started;
-    ATOMIC(uint64_t) threads_finished;
-    ATOMIC(uint32_t) threads_init;
-    ATOMIC(uint32_t) threads_deinit;
-    ATOMIC(uint32_t) is_closed;
-
-    Thread_Cache_Config config;
-} Thread_Cache;
-
-typedef enum {
-    THREAD_CACHE_IDLE,
-    THREAD_CACHE_RESERVED,
-    THREAD_CACHE_STARTING,
-    THREAD_CACHE_RUNNING,
-    THREAD_CACHE_CLOSED,
-} Thread_Cache_State;
-
 typedef struct Thread_Cache_Thread {
     //constant for entire lifetime
     Thread_Cache_Thread* next;
     Thread_Cache_Thread* created_from;
     uint64_t stack_size;
-    Thread_Cache* cache;
+    bool is_main;
 
     //changes with every new launch   
-    ATOMIC(uint64_t) launch_id_and_state; 
+    PLATFORM_ATOMIC(uint64_t) launch_id_and_state; 
 
     //protected by lock
     Platform_Shared_Mutex lock;
@@ -68,39 +42,52 @@ typedef struct Thread_Cache_Thread {
         isize name_size;
         isize name_capacity;
     
-        isize time_started_us;
-        isize time_finished_us;
+        PLATFORM_ATOMIC(isize) time_started_us;
+        PLATFORM_ATOMIC(isize) time_finished_us;
 } Thread_Cache_Thread;
 
-typedef struct Thread_Cache_Thread_Properties {
-    isize min_stack_size;
-    //affinitiy etc.
-} Thread_Cache_Thread_Properties;
+EXTERNAL Thread_Cache_Thread* thread_cache_init(const Thread_Cache_Config* config_or_null, const char* main_thread_name_fmt, ...);
+EXTERNAL void                 thread_cache_deinit();
+EXTERNAL Thread_Cache_Thread* thread_cache_launch(isize min_stack_size, void (*func)(void* args), const void* args, isize args_size, const char* thread_name_fmt, ...);
+EXTERNAL Thread_Cache_Thread* thread_cache_get_all();
+EXTERNAL Thread_Cache_Thread* thread_cache_create(isize min_stack_size);
+EXTERNAL Thread_Cache_Thread* thread_cache_self();
+EXTERNAL const char*          thread_cache_self_name();
 
-void thread_cache_deinit(Thread_Cache* cache);
-Thread_Cache_Thread* thread_cache_init(Thread_Cache* cache, const Thread_Cache_Config* config_or_null, const char* main_thread_name_fmt, ...);
-Thread_Cache_Thread* thread_cache_lunch(Thread_Cache* cache, isize min_stack_size, void (*func)(void* args), const void* args, isize args_size, const char* thread_name_fmt, ...);
-Thread_Cache_Thread* thread_cache_get_all(Thread_Cache* cache);
-Thread_Cache_Thread* thread_cache_create_paused(Thread_Cache* cache, isize min_stack_size);
-Thread_Cache_Thread* thread_cache_self();
-const char*          thread_cache_self_name();
-
-#ifdef __cplusplus
-    #define _THREAD_CACHE_USE_ATOMICS using namespace std
-#else
-    #define _THREAD_CACHE_USE_ATOMICS
 #endif
 
-#define _Thread_local 
+#if (defined(MODULE_IMPL_ALL) || defined(MODULE_THREAD_CACHE_IMPL)) && !defined(MODULE_THREAD_CACHE_HAS_IMPL)
+#define MODULE_THREAD_CACHE_HAS_IMPL
 
-_Thread_local Thread_Cache_Thread* t_thread_cache_thread = NULL; 
-static void _thread_cache_run_func(void* context)
+enum {
+    _THREAD_CACHE_IDLE = 0,
+    _THREAD_CACHE_STARTING,
+    _THREAD_CACHE_RUNNING,
+    _THREAD_CACHE_CLOSED,
+};
+
+typedef struct Thread_Cache {
+    PLATFORM_ATOMIC(Thread_Cache_Thread*) threads;
+    PLATFORM_ATOMIC(uint64_t) threads_started;
+    PLATFORM_ATOMIC(uint64_t) threads_finished;
+    PLATFORM_ATOMIC(uint32_t) threads_init;
+    PLATFORM_ATOMIC(uint32_t) threads_deinit;
+    PLATFORM_ATOMIC(uint32_t) is_closed;
+
+    Thread_Cache_Config config;
+    Thread_Cache_Thread* main_thread;
+} Thread_Cache;
+
+INTERNAL Thread_Cache g_thread_cache = {0};
+ATTRIBUTE_THREAD_LOCAL Thread_Cache_Thread* t_thread_cache_thread = NULL; 
+
+INTERNAL void _thread_cache_run_func(void* context)
 {
-    _THREAD_CACHE_USE_ATOMICS;
+    PLATFORM_USE_ATOMICS;
     Thread_Cache_Thread* self = (Thread_Cache_Thread*) context;
     t_thread_cache_thread = self;
     
-    Thread_Cache* cache = self->cache;
+    Thread_Cache* cache = &g_thread_cache;
     Thread_Cache_Config* config = &cache->config;
     if(config->thread_init) 
         config->thread_init(config->thread_context);
@@ -110,10 +97,10 @@ static void _thread_cache_run_func(void* context)
         uint64_t state = launch_id_and_state & 0xFF;
         uint64_t launch_id = launch_id_and_state >> 8;
 
-        if(state == THREAD_CACHE_CLOSED)
+        if(state == _THREAD_CACHE_CLOSED)
             break;
 
-        if(state != THREAD_CACHE_RUNNING)
+        if(state != _THREAD_CACHE_RUNNING)
             platform_futex_wait(&self->launch_id_and_state, launch_id_and_state, -1);
         else {
             platform_shared_mutex_shared_lock(&self->lock);
@@ -125,7 +112,8 @@ static void _thread_cache_run_func(void* context)
                 config->thread_after_func(config->thread_context);
             platform_shared_mutex_shared_unlock(&self->lock);
 
-            atomic_store_explicit(&self->launch_id_and_state, (launch_id + 1) << 8 | THREAD_CACHE_IDLE, memory_order_relaxed);
+            atomic_store_explicit(&self->time_started_us, platform_epoch_time(), memory_order_relaxed);
+            atomic_store_explicit(&self->launch_id_and_state, (launch_id + 1) << 8 | _THREAD_CACHE_IDLE, memory_order_relaxed);
             atomic_fetch_add(&cache->threads_finished, 1);
         }
     }
@@ -133,33 +121,27 @@ static void _thread_cache_run_func(void* context)
     if(config->thread_deinit) 
         config->thread_deinit(config->thread_context);
 
-    platform_shared_mutex_deinit(&self->lock);
-    free(self->args);
-    free(self->name);
-    free(self);
-
     atomic_fetch_add(&cache->threads_deinit, 1);
     platform_futex_wake_all(&cache->threads_deinit);
 }
 
-Thread_Cache_Thread* thread_cache_create_thread(Thread_Cache* cache, isize stack_size_or_negative)
+INTERNAL Thread_Cache_Thread* _thread_cache_create(Thread_Cache* cache, isize stack_size_or_negative, bool launch_thread)
 {
-    _THREAD_CACHE_USE_ATOMICS;
+    PLATFORM_USE_ATOMICS;
     Thread_Cache_Thread* thread = (Thread_Cache_Thread*) calloc(1, sizeof(Thread_Cache_Thread));
     TEST(thread, "out of memory");
 
-    thread->launch_id_and_state = THREAD_CACHE_STARTING;
+    thread->launch_id_and_state = _THREAD_CACHE_STARTING;
     thread->args_capacity = 256;
     thread->args = calloc(thread->args_capacity, 1);
     thread->name_capacity = 256;
     thread->name = (char*) calloc(thread->name_capacity, 1);
-    thread->cache = cache;
     thread->created_from = thread_cache_self();
 
     //launch thread
-    if(platform_thread_launch(stack_size_or_negative, _thread_cache_run_func, thread, 
-        "Thread_Cache name:%s thread %i", cache->name ? cache->name : "[empty]", (int) cache->threads_init + 1) != 0)
-        PANIC("Thread_Cache: failed to make os thread");
+    if(launch_thread)
+        if(platform_thread_launch(stack_size_or_negative, _thread_cache_run_func, thread, "Thread_Cache thread %i", (int) cache->threads_init + 1) != 0)
+            PANIC("Thread_Cache: failed to make os thread");
             
     //push to atomic Treiber stack
     for(;;) {
@@ -172,12 +154,40 @@ Thread_Cache_Thread* thread_cache_create_thread(Thread_Cache* cache, isize stack
     return thread;
 }
 
-Thread_Cache_Thread* thread_cache_lunch_thread(Thread_Cache* cache, isize stack_size_or_negative, void (*func)(void* context), const void* args, isize args_size, const char* thread_name_fmt, ...)
+INTERNAL void _thread_cache_set_name(Thread_Cache_Thread* thread, const char* thread_name_fmt, va_list args) 
 {
-    _THREAD_CACHE_USE_ATOMICS;
+    ASSERT(thread->name_capacity > 0 && thread->name);
+    ASSERT(thread->name_size < thread->name_capacity);
 
-    if(atomic_load(&cache->is_closed) && thread_cache_self() == NULL)
-        PANIC("Thread_Cache: thread_cache_lunch_thread after deinit from outside thread");
+    int count = 0;
+    if(thread_name_fmt != NULL) {
+        va_list copy;
+        va_copy(copy, args);
+    
+        count = vsnprintf(thread->name, thread->name_capacity, thread_name_fmt, args);
+        if(count >= thread->name_capacity) {
+            while(thread->name_capacity < count + 1)
+                thread->name_capacity *= 2;
+
+            thread->name = (char*) realloc(thread->name, thread->name_capacity);
+            count = vsnprintf(thread->name, thread->name_capacity, thread_name_fmt, copy);
+        }
+    }
+    
+    ASSERT(thread->name_capacity > 0 && thread->name);
+    ASSERT(thread->name_size < thread->name_capacity);
+    thread->name_size = count;
+    thread->name[thread->name_size] = '\0';
+}
+
+EXTERNAL Thread_Cache_Thread* thread_cache_launch(isize min_stack_size, void (*func)(void* args), const void* args, isize args_size, const char* thread_name_fmt, ...)
+{
+    PLATFORM_USE_ATOMICS;
+    Thread_Cache* cache = &g_thread_cache;
+
+    Thread_Cache_Thread* self_thread = thread_cache_self();
+    if(atomic_load(&cache->is_closed) && (self_thread == NULL || self_thread->is_main))
+        PANIC("Thread_Cache: thread_cache_lunch after deinit from outside thread");
 
     //Attempt to find an idle thread. Go through all threads and simply CAS to try take one.
     //If something changed between the start of the search and end we restart.
@@ -192,9 +202,9 @@ Thread_Cache_Thread* thread_cache_lunch_thread(Thread_Cache* cache, isize stack_
             uint64_t state = launch_id_and_state & 0xFF;
             uint64_t launch_id = launch_id_and_state >> 8;
 
-            if(state == THREAD_CACHE_IDLE && curr->stack_size >= stack_size_or_negative) {
+            if(state == _THREAD_CACHE_IDLE && curr->stack_size >= min_stack_size) {
                 //try to go to starting stage
-                if(atomic_compare_exchange_strong(&curr->launch_id_and_state, &launch_id_and_state, (launch_id << 8) | THREAD_CACHE_STARTING)) {
+                if(atomic_compare_exchange_strong(&curr->launch_id_and_state, &launch_id_and_state, (launch_id << 8) | _THREAD_CACHE_STARTING)) {
                     thread = curr;
                     goto outer_loop_end;
                 }
@@ -213,9 +223,10 @@ Thread_Cache_Thread* thread_cache_lunch_thread(Thread_Cache* cache, isize stack_
 
     //if didnt find created one
     if(thread == NULL)
-        thread = thread_cache_create_thread(cache, stack_size_or_negative);
+        thread = _thread_cache_create(cache, min_stack_size, true);
 
     platform_shared_mutex_unique_lock(&thread->lock);
+    {
         thread->func = func;
 
         //copy over the argument data
@@ -230,48 +241,26 @@ Thread_Cache_Thread* thread_cache_lunch_thread(Thread_Cache* cache, isize stack_
         memcpy(thread->args, args, args_size);
     
         //copy over the name
-        if(thread_name_fmt) {
-            va_list name_args;
-            va_start(name_args, thread_name_fmt);
-            vsnprintf(thread->name, sizeof thread->name, thread_name_fmt, name_args);
-            va_end(name_args);
-        }
-        else {
-            memset(thread->name, 0, sizeof thread->name);
-        }
+        va_list name_args;
+        va_start(name_args, thread_name_fmt);
+        _thread_cache_set_name(thread, thread_name_fmt, name_args);
+        va_end(name_args);
+    }
     platform_shared_mutex_unique_unlock(&thread->lock);
 
-    atomic_store(&thread->launch_id_and_state, THREAD_CACHE_RUNNING);
+    atomic_store_explicit(&thread->time_started_us, platform_epoch_time(), memory_order_relaxed);
+    atomic_store(&thread->launch_id_and_state, _THREAD_CACHE_RUNNING);
     platform_futex_wake_all(&thread->launch_id_and_state);
     
     atomic_fetch_add(&cache->threads_started, 1);
     return thread;
 }
 
-Thread_Cache_Thread* thread_cache_self()
+EXTERNAL void thread_cache_deinit()
 {
-    return t_thread_cache_thread;
-}
-const char* thread_cache_self_name()
-{
-    if(t_thread_cache_thread)
-        return t_thread_cache_thread->name;
-    else
-        return NULL;
-}
-
-void thread_cache_init(Thread_Cache* cache, const char* debug_name, const Thread_Cache_Config* config_or_null)
-{
-    thread_cache_deinit(cache);
-    cache->name = debug_name;
-    if(config_or_null)
-        cache->config = *config_or_null;
-}
-
-void thread_cache_deinit(Thread_Cache* cache)
-{
-    _THREAD_CACHE_USE_ATOMICS;
-
+    PLATFORM_USE_ATOMICS;
+    
+    Thread_Cache* cache = &g_thread_cache;
     uint64_t started = atomic_load(&cache->threads_started);
     uint64_t finished = atomic_load(&cache->threads_started);
     TEST(started == finished, "there are still %i threads running!", (int) (finished - started));
@@ -279,7 +268,7 @@ void thread_cache_deinit(Thread_Cache* cache)
     //set all closed
     cache->is_closed = true;
     for(Thread_Cache_Thread* curr = atomic_load(&cache->threads); curr; curr = curr->next) {
-        atomic_fetch_or(&curr->launch_id_and_state, THREAD_CACHE_CLOSED);
+        atomic_fetch_or(&curr->launch_id_and_state, _THREAD_CACHE_CLOSED);
         platform_futex_wake_all(&curr->launch_id_and_state);
     }
 
@@ -292,6 +281,62 @@ void thread_cache_deinit(Thread_Cache* cache)
 
         platform_futex_wait(&cache->threads_deinit, threads_deinit, -1);
     }
+    
+    //free all thread data
+    for(Thread_Cache_Thread* curr = cache->threads; curr; ) {
+        Thread_Cache_Thread* next = curr->next; 
+        platform_shared_mutex_deinit(&curr->lock);
+        free(curr->args);
+        free(curr->name);
+        free(curr);
+
+        curr = next;
+    }
 
     memset(cache, 0, sizeof *cache);
+    t_thread_cache_thread = NULL;
 }
+
+EXTERNAL Thread_Cache_Thread* thread_cache_init(const Thread_Cache_Config* config_or_null, const char* main_thread_name_fmt, ...)
+{
+    thread_cache_deinit();
+    Thread_Cache* cache = &g_thread_cache;
+    Thread_Cache_Thread* main_thred = _thread_cache_create(cache, 0, false);
+    main_thred->is_main = true;
+
+    va_list name_args;
+    va_start(name_args, main_thread_name_fmt);
+    _thread_cache_set_name(main_thred, main_thread_name_fmt, name_args);
+    va_end(name_args);
+
+    cache->main_thread = main_thred;
+    if(config_or_null)
+        cache->config = *config_or_null;
+        
+    t_thread_cache_thread = main_thred;
+}
+
+EXTERNAL Thread_Cache_Thread* thread_cache_create(isize stack_size_or_negative)
+{
+    return _thread_cache_create(&g_thread_cache, stack_size_or_negative, true);
+}
+
+EXTERNAL Thread_Cache_Thread* thread_cache_get_all()
+{
+    return g_thread_cache.threads;
+}
+
+EXTERNAL Thread_Cache_Thread* thread_cache_self()
+{
+    return t_thread_cache_thread;
+}
+
+EXTERNAL const char* thread_cache_self_name()
+{
+    if(t_thread_cache_thread)
+        return t_thread_cache_thread->name;
+    else
+        return NULL;
+}
+
+#endif

@@ -493,6 +493,17 @@ bool platform_exception_sandbox(
     #define PLATFORM_ATOMIC(T) _Atomic(T) 
 #endif
 
+#ifdef __cplusplus
+    #define PLATFORM_USE_ATOMICS \
+        using std::memory_order_acquire;\
+        using std::memory_order_release;\
+        using std::memory_order_seq_cst;\
+        using std::memory_order_relaxed;\
+        using std::memory_order_consume;
+#else
+    #define PLATFORM_USE_ATOMICS
+#endif
+
 static bool platform_once_begin(volatile uint32_t* once)
 {
     enum {
