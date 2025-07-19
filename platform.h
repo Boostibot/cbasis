@@ -166,18 +166,18 @@ bool            platform_mutex_try_lock(Platform_Mutex* mutex);
 
 //Small non-recursive mutex which allows multiple readers to hold the mutex at once.
 //Only a single writer may hold the mutex at once.
-typedef struct Platform_RW_Lock {
+typedef struct Platform_Shared_Mutex {
     void* handle;
-} Platform_RW_Lock;
+} Platform_Shared_Mutex;
 
-Platform_Error  platform_rwlock_init(Platform_RW_Lock* mutex);
-void            platform_rwlock_deinit(Platform_RW_Lock* mutex);
-void            platform_rwlock_reader_lock(Platform_RW_Lock* mutex);
-void            platform_rwlock_reader_unlock(Platform_RW_Lock* mutex);
-void            platform_rwlock_writer_lock(Platform_RW_Lock* mutex);
-void            platform_rwlock_writer_unlock(Platform_RW_Lock* mutex);
-bool            platform_rwlock_reader_try_lock(Platform_RW_Lock* mutex);
-bool            platform_rwlock_writer_try_lock(Platform_RW_Lock* mutex);
+Platform_Error  platform_shared_mutex_init(Platform_Shared_Mutex* mutex);
+void            platform_shared_mutex_deinit(Platform_Shared_Mutex* mutex);
+void            platform_shared_mutex_shared_lock(Platform_Shared_Mutex* mutex);
+void            platform_shared_mutex_shared_unlock(Platform_Shared_Mutex* mutex);
+void            platform_shared_mutex_unique_lock(Platform_Shared_Mutex* mutex);
+void            platform_shared_mutex_unique_unlock(Platform_Shared_Mutex* mutex);
+bool            platform_shared_mutex_shared_try_lock(Platform_Shared_Mutex* mutex);
+bool            platform_shared_mutex_unique_try_lock(Platform_Shared_Mutex* mutex);
 
 typedef struct Platform_Cond_Var {
     void* handle;
@@ -188,21 +188,25 @@ void            platform_cond_var_deinit(Platform_Cond_Var* cond_var);
 void            platform_cond_var_wake_single(Platform_Cond_Var* cond_var);
 void            platform_cond_var_wake_all(Platform_Cond_Var* cond_var);
 bool            platform_cond_var_wait_mutex(Platform_Cond_Var* cond_var, Platform_Mutex* mutex, double seconds_or_negative_if_infinite);
-// bool            platform_cond_var_wait_rwlock_reader(Platform_Cond_Var* cond_var, Platform_RW_Lock* mutex, double seconds_or_negative_if_infinite);
-// bool            platform_cond_var_wait_rwlock_writer(Platform_Cond_Var* cond_var, Platform_RW_Lock* mutex, double seconds_or_negative_if_infinite);
+// bool            platform_cond_var_wait_shared_mutex_shared(Platform_Cond_Var* cond_var, Platform_Shared_Mutex* mutex, double seconds_or_negative_if_infinite);
+// bool            platform_cond_var_wait_shared_mutex_unique(Platform_Cond_Var* cond_var, Platform_Shared_Mutex* mutex, double seconds_or_negative_if_infinite);
 
 
 bool            platform_futex_wait(volatile void* futex, uint32_t value, double seconds_or_negative_if_infinite);
 void            platform_futex_wake_single(volatile void* futex);
 void            platform_futex_wake_all(volatile void* futex);
 
-//Allows a resource to be initialized exactly once even in the case of raacing threads.
-//The first thread that reaches this point attomically sets state to initializing value and return true.
+//Allows a resource to be initialized exactly once even in the case of reaching threads.
+//The first thread that reaches this point atomically sets state to initializing value and return true.
 //  This thread must eventually call platform_once_end() once its done initializing said resource.
-//All other threads are blocked untill platform_once_end() is called.
-//After the resource has been initialized these calls exit imemdiately and are evry cheap (just one load).
+//All other threads are blocked until platform_once_end() is called.
+//After the resource has been initialized these calls exit immediately and are very cheap (just one load).
 static bool     platform_once_begin(volatile uint32_t* state);
 static void     platform_once_end(volatile uint32_t* state);
+
+//Calls platform_once_begin() and platform_once_end() correctly. Use like
+// PLATFORM_ONCE() { printf("Will print only once!"); }
+#define PLATFORM_ONCE() static uint32_t ONCE_STATE = 0; for(; platform_once_begin(&ONCE_STATE); platform_once_end(&ONCE_STATE)) //yes it is just MSVC that cant handle static inside the for...
 
 //=========================================
 // Timings
@@ -417,7 +421,7 @@ void platform_exception_deinit(Platform_Exception* error);
 //Launches the sandboxed_func inside a sandbox protecting the outside environment 
 // from any exceptions, including hardware exceptions that might occur inside sandboxed_func.
 //If an exception occurs collects execution context including stack pointers and saves it into
-// error_or_null if not null. After an error occured should call platform_exception_deinit to
+// error_or_null if not null. After an error occurred should call platform_exception_deinit to
 // release the error memory
 //Returns true if no error occurred, false if some error occurred.
 bool platform_exception_sandbox(
@@ -478,6 +482,7 @@ bool platform_exception_sandbox(
     #endif
 #endif
 
+//TODO: improve!
 #ifdef __cplusplus
     #include <atomic>
     #define PLATFORM_USE_ATOMICS using namespace std

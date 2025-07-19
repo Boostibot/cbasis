@@ -437,22 +437,22 @@ bool platform_mutex_try_lock(Platform_Mutex* mutex) { return pthread_mutex_trylo
 //======================================
 // RW Lock
 //======================================
-Platform_Error platform_rwlock_init(Platform_RW_Lock* mutex)
+Platform_Error platform_shared_mutex_init(Platform_Shared_Mutex* mutex)
 {
     Platform_Error error = 0;
-    platform_rwlock_deinit(mutex);
+    platform_shared_mutex_deinit(mutex);
     mutex->handle = calloc(1, sizeof(pthread_rwlock_t));
     error = _platform_error_code(mutex->handle != NULL);
     if(error == 0)
         error = pthread_rwlock_init((pthread_rwlock_t*) mutex->handle, NULL);
 
     if(error)
-        platform_rwlock_deinit(mutex);
+        platform_shared_mutex_deinit(mutex);
 
     return error;
 }
 
-void platform_rwlock_deinit(Platform_RW_Lock* mutex)
+void platform_shared_mutex_deinit(Platform_Shared_Mutex* mutex)
 {
     if(mutex->handle)
     {
@@ -462,12 +462,12 @@ void platform_rwlock_deinit(Platform_RW_Lock* mutex)
     }
 }
 
-void platform_rwlock_reader_lock(Platform_RW_Lock* mutex)       { pthread_rwlock_rdlock((pthread_rwlock_t*) mutex->handle);}
-void platform_rwlock_reader_unlock(Platform_RW_Lock* mutex)     { pthread_rwlock_unlock((pthread_rwlock_t*) mutex->handle);}
-void platform_rwlock_writer_lock(Platform_RW_Lock* mutex)       { pthread_rwlock_wrlock((pthread_rwlock_t*) mutex->handle);}
-void platform_rwlock_writer_unlock(Platform_RW_Lock* mutex)     { pthread_rwlock_unlock((pthread_rwlock_t*) mutex->handle);}
-bool platform_rwlock_reader_try_lock(Platform_RW_Lock* mutex)   { return pthread_rwlock_tryrdlock((pthread_rwlock_t*) mutex->handle) == 0;}
-bool platform_rwlock_writer_try_lock(Platform_RW_Lock* mutex)   { return pthread_rwlock_trywrlock((pthread_rwlock_t*) mutex->handle) == 0;}
+void platform_shared_mutex_shared_lock(Platform_Shared_Mutex* mutex)       { pthread_rwlock_rdlock((pthread_rwlock_t*) mutex->handle);}
+void platform_shared_mutex_shared_unlock(Platform_Shared_Mutex* mutex)     { pthread_rwlock_unlock((pthread_rwlock_t*) mutex->handle);}
+void platform_shared_mutex_unique_lock(Platform_Shared_Mutex* mutex)       { pthread_rwlock_wrlock((pthread_rwlock_t*) mutex->handle);}
+void platform_shared_mutex_unique_unlock(Platform_Shared_Mutex* mutex)     { pthread_rwlock_unlock((pthread_rwlock_t*) mutex->handle);}
+bool platform_shared_mutex_shared_try_lock(Platform_Shared_Mutex* mutex)   { return pthread_rwlock_tryrdlock((pthread_rwlock_t*) mutex->handle) == 0;}
+bool platform_shared_mutex_unique_try_lock(Platform_Shared_Mutex* mutex)   { return pthread_rwlock_trywrlock((pthread_rwlock_t*) mutex->handle) == 0;}
 
 //======================================
 // COND VAR

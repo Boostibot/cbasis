@@ -357,37 +357,37 @@ bool platform_mutex_try_lock(Platform_Mutex* mutex)
 //=========================================
 // RW LOCK
 //=========================================
-Platform_Error platform_rwlock_init(Platform_RW_Lock* mutex)
+Platform_Error platform_shared_mutex_init(Platform_Shared_Mutex* mutex)
 {
     InitializeSRWLock((SRWLOCK*) &mutex->handle);
     return PLATFORM_ERROR_OK;
 }
-void platform_rwlock_deinit(Platform_RW_Lock* mutex)
+void platform_shared_mutex_deinit(Platform_Shared_Mutex* mutex)
 {
     mutex->handle = NULL;
 }
-void platform_rwlock_reader_lock(Platform_RW_Lock* mutex)
+void platform_shared_mutex_shared_lock(Platform_Shared_Mutex* mutex)
 {
     AcquireSRWLockShared((SRWLOCK*) &mutex->handle);
 }
-void platform_rwlock_reader_unlock(Platform_RW_Lock* mutex)
+void platform_shared_mutex_shared_unlock(Platform_Shared_Mutex* mutex)
 {
     ReleaseSRWLockShared((SRWLOCK*) &mutex->handle);
 }
-void platform_rwlock_writer_lock(Platform_RW_Lock* mutex)
+void platform_shared_mutex_unique_lock(Platform_Shared_Mutex* mutex)
 {
     AcquireSRWLockExclusive((SRWLOCK*) &mutex->handle);
 }
-void platform_rwlock_writer_unlock(Platform_RW_Lock* mutex)
+void platform_shared_mutex_unique_unlock(Platform_Shared_Mutex* mutex)
 {
     ReleaseSRWLockExclusive((SRWLOCK*) &mutex->handle);
 }
 
-bool platform_rwlock_reader_try_lock(Platform_RW_Lock* mutex)
+bool platform_shared_mutex_shared_try_lock(Platform_Shared_Mutex* mutex)
 {
     return !!TryAcquireSRWLockShared((SRWLOCK*) &mutex->handle);
 }
-bool platform_rwlock_writer_try_lock(Platform_RW_Lock* mutex)
+bool platform_shared_mutex_unique_try_lock(Platform_Shared_Mutex* mutex)
 {
     return !!TryAcquireSRWLockExclusive((SRWLOCK*) &mutex->handle);
 }
@@ -436,7 +436,7 @@ bool platform_cond_var_wait_mutex(Platform_Cond_Var* cond_var, Platform_Mutex* m
     return !!SleepConditionVariableCS((CONDITION_VARIABLE*) cond_var->handle, (CRITICAL_SECTION*) mutex->handle, wait_ms);
 }
 
-static bool _platform_cond_var_wait_rwlock(Platform_Cond_Var* cond_var, Platform_RW_Lock* mutex, double seconds_or_negative_if_infinite, bool is_reader)
+static bool _platform_cond_var_wait_rwlock(Platform_Cond_Var* cond_var, Platform_Shared_Mutex* mutex, double seconds_or_negative_if_infinite, bool is_reader)
 {
     assert(mutex && mutex->handle != NULL);
     assert(cond_var && cond_var->handle != NULL);
@@ -446,12 +446,12 @@ static bool _platform_cond_var_wait_rwlock(Platform_Cond_Var* cond_var, Platform
     return !!SleepConditionVariableSRW((CONDITION_VARIABLE*) cond_var->handle, (SRWLOCK*) &mutex->handle, wait_ms, is_reader ? CONDITION_VARIABLE_LOCKMODE_SHARED : 0);
 }
 
-bool platform_cond_var_wait_rwlock_reader(Platform_Cond_Var* cond_var, Platform_RW_Lock* mutex, double seconds_or_negative_if_infinite)
+bool platform_cond_var_wait_rwlock_reader(Platform_Cond_Var* cond_var, Platform_Shared_Mutex* mutex, double seconds_or_negative_if_infinite)
 {
     return _platform_cond_var_wait_rwlock(cond_var, mutex, seconds_or_negative_if_infinite, true);
 }
 
-bool platform_cond_var_wait_rwlock_writer(Platform_Cond_Var* cond_var, Platform_RW_Lock* mutex, double seconds_or_negative_if_infinite)
+bool platform_cond_var_wait_rwlock_writer(Platform_Cond_Var* cond_var, Platform_Shared_Mutex* mutex, double seconds_or_negative_if_infinite)
 {
     return _platform_cond_var_wait_rwlock(cond_var, mutex, seconds_or_negative_if_infinite, false);
 }
@@ -1243,22 +1243,17 @@ Platform_Error platform_directory_get_current_working(void* buffer, isize plt_bu
 
 const char* platform_directory_get_startup_working()
 {
-    static uint32_t init = 0;
     static const char* cwd = NULL;
-    if(platform_once_begin(&init))
-    {
+    PLATFORM_ONCE() {
         cwd = _getcwd(NULL, 0);
-        platform_once_end(&init);
     }
     return cwd;
 }
 
 const char* platform_get_executable_path()
 {
-    static uint32_t init = 0;
     static const char* dir = {0};
-    if(platform_once_begin(&init))
-    {
+    PLATFORM_ONCE() {
         Plt_WString_Buffer wide = {0};
         Plt_WString_Buffer full_path = {0};
         plt_buffer_init_backed(&wide, _LOCAL_BUFFER_SIZE);
@@ -1285,7 +1280,6 @@ const char* platform_get_executable_path()
         plt_buffer_deinit(&wide);
 
         assert(dir != NULL);
-        platform_once_end(&init);
     }
     return dir;
 }

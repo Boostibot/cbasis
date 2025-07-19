@@ -79,6 +79,7 @@ static void test_all(double total_time)
         UNIT_TEST(test_path),
         UNIT_TEST(test_log),
         UNIT_TEST(test_match),
+        TIMED_TEST(test_spmc_queue),
         TIMED_TEST(test_hash),
         TIMED_TEST(test_stable),
         TIMED_TEST(test_map),
@@ -93,7 +94,6 @@ static void test_all(double total_time)
         TIMED_TEST(test_debug_allocator),
         TIMED_TEST(slz4_test),
         TIMED_TEST(test_allocator_tlsf),
-        TIMED_TEST(test_spmc_queue),
         UNIT_TEST(NULL)
     );
 }
