@@ -246,8 +246,6 @@ MAP_INLINE_API bool _map_insert_or_find(Map* map, Map_Info info, const void* key
     uint8_t* entry = NULL;
     for(uint64_t k = 1; ; k++)
     {
-        //if(k > map->capacity)
-            //LOG_HERE();
         ASSERT(k <= map->capacity);
         entry = map->entries + info.entry_size*i;
         memcpy(&entry_hash, entry + info.hash_offset, sizeof entry_hash);

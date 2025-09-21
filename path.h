@@ -706,16 +706,18 @@ EXTERNAL bool path_builder_append(Path_Builder* into, Path path, int flags)
                             builder_append(&into->builder, root_content);
                             builder_push(&into->builder, slash);
                         }
-                        else
-                            LOG_WARN("path", "Empty prefix '%.*s' with PATH_ROOT_SERVER", STRING_PRINT(root_content));
+                        else {
+                            //LOG_WARN("path", "Empty prefix '%.*s' with PATH_ROOT_SERVER", STRING_PRINT(root_content));
+                        }
                     } break;
 
                     case PATH_ROOT_WIN: {
                         char c = 'C';
                         if(root_content.count > 0 && char_is_alpha(root_content.data[0]))
                             c = root_content.data[0];
-                        else
-                            LOG_WARN("path", "Strange prefix '%.*s' with PATH_ROOT_WIN", STRING_PRINT(root_content));
+                        else {
+                            //LOG_WARN("path", "Strange prefix '%.*s' with PATH_ROOT_WIN", STRING_PRINT(root_content));
+                        }
 
                         //to uppercase
                         if('a' <= c && c <= 'z')

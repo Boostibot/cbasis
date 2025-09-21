@@ -33,8 +33,7 @@
 typedef struct Sync_Wait {
     Sync_Wait_Func wait;
     Sync_Wake_Func wake;
-    uint32_t notify_bit;
-    uint32_t _;
+    void* context;
 } Sync_Wait;
 
 #ifdef __cplusplus
@@ -55,10 +54,7 @@ typedef union Ticket_Lock {
     CHAN_ATOMIC(uint64_t) combined;
 } Ticket_Lock;
 
-CHANAPI void ticket_lock(Ticket_Lock* lock, Sync_Wait wait);
-CHANAPI void ticket_unlock(Ticket_Lock* lock, Sync_Wait wait);
-
-CHANAPI void ticket_lock(Ticket_Lock* lock, Sync_Wait wait)
+static inline void ticket_lock(Ticket_Lock* lock, Sync_Wait wait)
 {
     uint32_t ticket = atomic_fetch_add(&lock->requested, 1);
     for(;;) {
@@ -68,20 +64,20 @@ CHANAPI void ticket_lock(Ticket_Lock* lock, Sync_Wait wait)
 
         if(wait.wait)
             wait.wait((void*) &lock->completed, curr_completed, -1);
-        else
-            chan_pause();
     }
 }
 
-CHANAPI void ticket_unlock(Ticket_Lock* lock, Sync_Wait wait)
+static inline void ticket_unlock(Ticket_Lock* lock, Sync_Wait wait)
 {
     atomic_fetch_add(&lock->completed, 1);
     if(wait.wake)
         wait.wake((void*) &lock->completed);
 }
 
-//barrier -> wait until N threads reached place then reset the counter and 
-
+//==========================================================================
+// 
+//==========================================================================
+// 
 typedef union Barrier {
     struct {
         CHAN_ATOMIC(uint32_t) head;
@@ -92,7 +88,7 @@ typedef union Barrier {
 
 #define BARRIER_INIT {0}
 
-static void sync_barrier(Barrier* barrier, Sync_Wait wait, uint32_t count)
+static inline void sync_barrier(Barrier* barrier, Sync_Wait wait, uint32_t count)
 {
     uint64_t h_t = atomic_fetch_add(&barrier->combined, (uint64_t) 1 << 32);
     uint32_t h = (uint32_t) h_t;
@@ -107,11 +103,10 @@ static void sync_barrier(Barrier* barrier, Sync_Wait wait, uint32_t count)
         }
             
         h = atomic_load(&barrier->head);
-        //wait
     }
 }
 
-static void sync_barrier_lift(Barrier* barrier, Sync_Wait wait, uint32_t count)
+static inline void sync_barrier_lift(Barrier* barrier, Sync_Wait wait, uint32_t count)
 {
     uint64_t h_t = atomic_load(&barrier->combined);
     uint32_t h = (uint32_t) h_t;
@@ -139,31 +134,29 @@ static void sync_barrier_lift(Barrier* barrier, Sync_Wait wait, uint32_t count)
 // The wake field is incremented every time the count crosses to or below zero, preventing
 // the ABA problem.
 typedef union Wait_Group {
+    struct {
+        CHAN_ATOMIC(uint32_t) head;
+        CHAN_ATOMIC(uint32_t) tail;
+    }; 
     CHAN_ATOMIC(uint64_t) combined;
-    struct {
-        CHAN_ATOMIC(int32_t) atomic_count;
-        CHAN_ATOMIC(uint32_t) atomic_wakes;
-    };
-    struct {
-        int32_t count;
-        uint32_t wakes;
-    };
 } Wait_Group; 
 
-CHANAPI int32_t wait_group_count(volatile Wait_Group* wg);
-CHANAPI Wait_Group* wait_group_push(volatile Wait_Group* wg, isize count);
-CHANAPI bool wait_group_pop(volatile Wait_Group* wg, isize count, Sync_Wait wait);
-CHANAPI void wait_group_wait(volatile Wait_Group* wg, Sync_Wait wait);
-CHANAPI bool wait_group_wait_timed(volatile Wait_Group* wg, double timeout, Sync_Wait wait);
+#define WAIT_GROUP_INIT {0}
+
+static inline int32_t wait_group_count(Wait_Group* wg);
+static inline uint32_t wait_group_push(Wait_Group* wg, isize count);
+static inline bool wait_group_pop(Wait_Group* wg, isize count, Sync_Wait wait);
+static inline void wait_group_wait(Wait_Group* wg, Sync_Wait wait);
+static inline void wait_group_wait_for(Wait_Group* wg, Sync_Wait wait, uint32_t pop_index);
+static inline bool wait_group_wait_timed(Wait_Group* wg, double timeout, Sync_Wait wait);
 
 //==========================================================================
 // Once
 //==========================================================================
 //Calls the provided function exactly once. Can also be used like
 // static Sync_Once once = 0;
-// if(sync_once_begin(&once)) {
+// for(; sync_once_begin(&once); sync_once_end(&once)) {
 //   //init code here...
-//   sync_once_end(&once);
 // }
 typedef CHAN_ATOMIC(uint32_t) Sync_Once;
 enum {
@@ -172,13 +165,9 @@ enum {
     SYNC_ONCE_INITIALIZING = 2,
 };
 
-CHANAPI bool sync_once(volatile Sync_Once* once, void(*func)(void* context), void* context, Sync_Wait wait);
-CHANAPI bool sync_once_begin(volatile Sync_Once* once, Sync_Wait wait);
-CHANAPI void sync_once_end(volatile Sync_Once* once, Sync_Wait wait);
+#define SYNC_ONCE_INIT 0
 
-
-
-CHANAPI bool sync_once_begin(volatile Sync_Once* once, Sync_Wait wait)
+static inline bool sync_once_begin(Sync_Once* once, Sync_Wait wait)
 {
     uint32_t before_value = atomic_load(once);
     if(before_value != SYNC_ONCE_INIT)
@@ -196,57 +185,45 @@ CHANAPI bool sync_once_begin(volatile Sync_Once* once, Sync_Wait wait)
 
             if(wait.wait)
                 return wait.wait((void*) once, current, -1);
-            else
-                chan_pause();
         }
     }
     return false;
 }
-CHANAPI void sync_once_end(volatile Sync_Once* once, Sync_Wait wait)
+static inline void sync_once_end(Sync_Once* once, Sync_Wait wait)
 {
     atomic_store(once, SYNC_ONCE_INIT);
     if(wait.wake)
         wait.wake((void*) once);
 }
-CHANAPI bool sync_once(volatile Sync_Once* once, void(*func)(void* context), void* context, Sync_Wait wait)
-{
-    if(sync_once_begin(once, wait))
-    {
-        func(context);
-        sync_once_end(once, wait);
-        return true;
-    }
-    return false;
-}
 
+//=================================================================================
+//=================================================================================
+//=================================================================================
+//=================================================================================
+//=================================================================================
+//=================================================================================
 CHANAPI int32_t wait_group_count(volatile Wait_Group* wg)
 {
     return (int32_t) atomic_load(&wg->atomic_count);
 }
 CHANAPI Wait_Group* wait_group_push(volatile Wait_Group* wg, isize count)
 {
-    if(count > 0)
-        atomic_fetch_add(&wg->atomic_count, (uint32_t) count);
+    ASSERT(count >= 0);
+    atomic_fetch_add(&wg->atomic_count, (uint32_t) count);
     return (Wait_Group*) wg;
 }
 CHANAPI bool wait_group_pop(volatile Wait_Group* wg, isize count, Sync_Wait wait)
 {
     bool out = false;
-    if(count <= 0)
-        chan_debug_log("wait_group_pop negative", (uint64_t) -count);
-    else
-    {
-        int32_t old_val = (int32_t) atomic_fetch_sub(&wg->atomic_count, (uint32_t) count);
-        chan_debug_log("wait_group_pop", (uint32_t) old_val, (uint32_t) old_val - (uint32_t) count);
+    ASSERT(count >= 0);
+    int32_t old_val = (int32_t) atomic_fetch_sub(&wg->atomic_count, (uint32_t) count);
 
-        //if this was the pop that got it over the line wake 
-        if(old_val - count <= 0 && old_val > 0)
-        {
-            atomic_fetch_add(&wg->atomic_wakes, 1);
-            chan_debug_log("wait_group_pop WAKE");
-            wait.wake(wg);
-            out = true;
-        }
+    //if this was the pop that got it over the line wake 
+    if(old_val - count <= 0 && old_val > 0)
+    {
+        atomic_fetch_add(&wg->atomic_wakes, 1);
+        wait.wake(wg);
+        out = true;
     }
 
     return out;
@@ -256,18 +233,11 @@ CHANAPI void wait_group_wait(volatile Wait_Group* wg, Sync_Wait wait)
     Wait_Group before = {atomic_load(&wg->combined)};
     Wait_Group curr = before;
     for(;; curr.combined = atomic_load(&wg->combined)) {
-        chan_debug_log("wait_group_wait", (uint32_t) curr.count, curr.wakes);
         if(curr.count <= 0 || before.wakes != curr.wakes)
-        {
-            chan_debug_log("wait_group_wait done", (uint32_t) curr.count, curr.wakes);
             return;
-        }
 
-        chan_debug_log("wait_group_wait WAIT", curr.count);
         if(wait.wait)
             wait.wait(wg, (uint32_t) curr.count, -1);
-        else
-            chan_pause();
     }
 }
 
@@ -283,25 +253,16 @@ CHANAPI bool wait_group_wait_timed(volatile Wait_Group* wg, double timeout, Sync
     Wait_Group before = {atomic_load(&wg->combined)};
     Wait_Group curr = before;
     for(;; curr.combined = atomic_load(&wg->combined)) {
-        chan_debug_log("wait_group_wait_timed", (uint32_t) curr.count, curr.wakes);
         if(curr.count <= 0 || before.wakes != curr.wakes)
-        {
-            chan_debug_log("wait_group_wait_timed done", (uint32_t) curr.count, curr.wakes);
             return true;
-        }
 
         int64_t curr_ticks = chan_perf_counter();
         int64_t ellapsed_ticks = curr_ticks - start_ticks;
         if(ellapsed_ticks > wait_ticks)
-        {
-            chan_debug_log("wait_group_wait_timed given after ticks", (uint64_t) wait_ticks);
             return false;
-        }
         
         double wait_s = (double) (wait_ticks - ellapsed_ticks)/freq_s;
         if(wait.wait)
             wait.wait(wg, (uint32_t) curr.count, wait_s);
-        else
-            chan_pause();
     }
 }

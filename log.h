@@ -18,27 +18,68 @@
 #include <time.h>
 
 typedef enum Log_Type {
-    LOG_FLUSH,      //only flushes the log but doesnt log anything
-    LOG_TRACE,      //step debug (prinf("HERE") etc.)
-    LOG_DEBUG,      //debug messages/bugs
-    LOG_INFO,       //general info.
-    LOG_OKAY,       //the opposites of errors
-    LOG_WARN,       //near error conditions
-    LOG_ERROR,      //errors
-    LOG_FATAL,      //just before aborting thread/process
+    LOG_DEBUG = 1, //debug messages/bugs
+    LOG_INFO  = 2, //general info
+    LOG_WARN  = 4, //near error conditions
+    LOG_ERROR = 8, //errors
 } Log_Type;
 
+typedef enum Log_Level {
+    LOG_LEVEL_MAIN = 2,
+    LOG_LEVEL_IMPORTANT = 1,
+    LOG_LEVEL_NORMAL = 0,
+    LOG_LEVEL_VERBOSE = -1,
+    LOG_LEVEL_SPAM = -2,
+} Log_Level;
+
+void func() {
+    #define log_info(...)
+    #define log_scope(...)
+    #define log_scope_steps(...)
+    #define log_step(...)
+    #define log_end(...)
+
+    log_info(">Begin");
+    log_info("Inside");
+    log_info("<End");
+}
+
+/*
+
+Hello world
+> New scope
+    Inside 
+< (0.00244s):
+
+>: scope steps
+    : Log1 
+    : Log2
+    : Log3 
+    : Log4 
+< (0.00244s):
+
+
+
+<
+*/
+
+
 typedef struct Log_Event {
-    const char* name;
+    const char* format;
     const char* file;
     const char* function;
     Log_Type type;
+    int32_t level;
     int32_t line;
-    int64_t indentation;
+    va_list args;
 } Log_Event;
 
 typedef struct Logger {
-    void (*log)(struct Logger* self, Log_Event event, const char* format, va_list args);
+    void (*log)(struct Logger* self, Log_Event event);
+    void (*flush)(struct Logger* self);
+
+    int32_t level;
+    uint32_t types;
 } Logger;
 
 EXTERNAL Logger* console_logger(); //returns the default logger which only logs to console
@@ -47,25 +88,36 @@ EXTERNAL Logger* log_get_logger();
 EXTERNAL Logger* log_set_logger(Logger* logger);
 EXTERNAL const char* log_type_to_string(Log_Type type);
 
-EXTERNAL void log_fmt(Logger* logger, Log_Type type, const char* module, int32_t line, const char* file, const char* function, const char* format, ...);
-EXTERNAL void log_vfmt(Logger* logger, Log_Type type, const char* module, int32_t line, const char* file, const char* function, const char* format, va_list args);
+EXTERNAL void _log_compressed(uint64_t type_level, const char* file_function_line, const char* format, ...);
+EXTERNAL void _log_vcompressed(uint64_t type_level, const char* file_function_line, const char* format, va_list args);
 EXTERNAL void log_flush(Logger* logger);
 
-EXTERNAL void log_callstack(Log_Type type, const char* module, int64_t skip);
-EXTERNAL void log_captured_callstack(Log_Type type, const char* module, void** callstack, int64_t callstack_size);
+EXTERNAL void log_callstack(Log_Type type, int32_t level, int64_t skip);
+EXTERNAL void log_captured_callstack(Log_Type type, int32_t level, void** callstack, int64_t callstack_size);
 
-#define LOGGER_LOG(logger, log_type, module, format, ...) log_fmt(logger, log_type, module, __LINE__, __FILE__, __func__, format, ##__VA_ARGS__)
-#define LOGGER_LOGV(logger, log_type, module, format, ...) log_vfmt(logger, log_type, module, __LINE__, __FILE__, __func__, format, args)
-#define LOG(log_type, module, format, ...)   LOGGER_LOG(log_get_logger(), (log_type), (module), (format), ##__VA_ARGS__)
-#define LOGV(log_type, module, format, args) LOGGER_LOGV(log_get_logger(), (log_type), (module), (format), (args))
-#define LOG_INFO(module, format, ...)  LOG(LOG_INFO,  module, format, ##__VA_ARGS__)
-#define LOG_OKAY(module, format, ...)  LOG(LOG_OKAY,  module, format, ##__VA_ARGS__)
-#define LOG_WARN(module, format, ...)  LOG(LOG_WARN,  module, format, ##__VA_ARGS__)
-#define LOG_ERROR(module, format, ...) LOG(LOG_ERROR, module, format, ##__VA_ARGS__)
-#define LOG_FATAL(module, format, ...) LOG(LOG_FATAL, module, format, ##__VA_ARGS__)
-#define LOG_DEBUG(module, format, ...) LOG(LOG_DEBUG, module, format, ##__VA_ARGS__)
-#define LOG_TRACE(module, format, ...) LOG(LOG_TRACE, module, format, ##__VA_ARGS__)
-#define LOG_HERE(...) LOG_TRACE("here", "%s %s:%i", __func__, __FILE__, __LINE__)
+#define FILE_FUNC_LINE __FILE__ "\0" __func__ "\0" __LINE__ "\0"
+#define log_generic(type, lvl, format, ...)  (_log_compressed((type) << 32 | (lvl), FILE_FUNC_LINE, format, ##__VA_ARGS__), sizeof(printf(format, ##__VA_ARGS__)))
+#define log_vgeneric(type, lvl, format, args)  _log_vcompressed((type) << 32 | (lvl), FILE_FUNC_LINE, format, args)
+
+#define log_info_level(lvl, format, ...)  log_generic(LOG_INFO , lvl, format, ##__VA_ARGS__)
+#define log_warn_level(lvl, format, ...)  log_generic(LOG_WARN , lvl, format, ##__VA_ARGS__)
+#define log_error_level(lvl, format, ...) log_generic(LOG_ERROR, lvl, format, ##__VA_ARGS__)
+#define log_debug_level(lvl, format, ...) log_generic(LOG_DEBUG, lvl, format, ##__VA_ARGS__)
+
+#define log_info(format, ...)  log_generic(LOG_INFO , LOG_LEVEL_NORMAL, format, ##__VA_ARGS__)
+#define log_warn(format, ...)  log_generic(LOG_WARN , LOG_LEVEL_NORMAL, format, ##__VA_ARGS__)
+#define log_error(format, ...) log_generic(LOG_ERROR, LOG_LEVEL_NORMAL, format, ##__VA_ARGS__)
+#define log_debug(format, ...) log_generic(LOG_DEBUG, LOG_LEVEL_NORMAL, format, ##__VA_ARGS__)
+
+#define log_info_verbose(format, ...)  log_generic(LOG_INFO , LOG_LEVEL_VERBOSE, format, ##__VA_ARGS__)
+#define log_warn_verbose(format, ...)  log_generic(LOG_WARN , LOG_LEVEL_VERBOSE, format, ##__VA_ARGS__)
+#define log_error_verbose(format, ...) log_generic(LOG_ERROR, LOG_LEVEL_VERBOSE, format, ##__VA_ARGS__)
+#define log_debug_verbose(format, ...) log_generic(LOG_DEBUG, LOG_LEVEL_VERBOSE, format, ##__VA_ARGS__)
+
+#define log_info_spam(format, ...)  log_generic(LOG_INFO , LOG_LEVEL_SPAM, format, ##__VA_ARGS__)
+#define log_warn_spam(format, ...)  log_generic(LOG_WARN , LOG_LEVEL_SPAM, format, ##__VA_ARGS__)
+#define log_error_spam(format, ...) log_generic(LOG_ERROR, LOG_LEVEL_SPAM, format, ##__VA_ARGS__)
+#define log_debug_spam(format, ...) log_generic(LOG_DEBUG, LOG_LEVEL_SPAM, format, ##__VA_ARGS__)
 
 //Printing helpers
 #define STRING_PRINT(str) (int) (str).count, (str).data
